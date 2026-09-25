@@ -138,6 +138,7 @@ class SoftphoneViewModel(
     val registrationMessage: StateFlow<String> = sipManager.registrationMessage
     val accountBalance: StateFlow<AccountBalance?> = sipManager.accountBalance
     val diagnosticLogs: StateFlow<List<String>> = sipManager.diagnosticLogs
+    val audioCodecs: StateFlow<List<com.example.data.model.AudioCodec>> = sipManager.audioCodecs
     val callState: StateFlow<CallState> = sipManager.callState
     val callDuration: StateFlow<Long> = sipManager.callDuration
     val isMuted: StateFlow<Boolean> = sipManager.isMuted

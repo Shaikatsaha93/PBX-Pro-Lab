@@ -3,6 +3,7 @@ package com.example.data.repository
 import android.content.Context
 import com.example.data.model.AppSettings
 import com.example.data.model.AppThemeMode
+import com.example.data.model.AudioCodec
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +20,8 @@ class SettingsRepository(context: Context) {
             adaptiveRateControl = prefs.getBoolean("adaptive_rate_control", true),
             micGainBoost = prefs.getBoolean("mic_gain_boost", false),
             earlyMediaEnabled = prefs.getBoolean("early_media_enabled", true),
+            enabledAudioCodecs = prefs.getStringSet("enabled_audio_codecs", null)
+                ?.toSet()?.takeIf { it.isNotEmpty() } ?: AudioCodec.DEFAULT_ENABLED,
             dtmfKeypadSound = prefs.getBoolean("dtmf_keypad_sound", true),
             dtmfHapticFeedback = prefs.getBoolean("dtmf_haptic_feedback", true),
             autoAnswer = prefs.getBoolean("auto_answer", false),
@@ -50,6 +53,7 @@ class SettingsRepository(context: Context) {
             .putBoolean("adaptive_rate_control", newSettings.adaptiveRateControl)
             .putBoolean("mic_gain_boost", newSettings.micGainBoost)
             .putBoolean("early_media_enabled", newSettings.earlyMediaEnabled)
+            .putStringSet("enabled_audio_codecs", newSettings.enabledAudioCodecs)
             .putBoolean("dtmf_keypad_sound", newSettings.dtmfKeypadSound)
             .putBoolean("dtmf_haptic_feedback", newSettings.dtmfHapticFeedback)
             .putBoolean("auto_answer", newSettings.autoAnswer)

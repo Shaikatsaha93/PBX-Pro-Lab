@@ -5,6 +5,7 @@ import android.media.AudioManager
 import android.util.Log
 import com.example.data.model.AccountBalance
 import com.example.data.model.AppSettings
+import com.example.data.model.AudioCodec
 import com.example.data.model.CallState
 import com.example.data.model.ConferenceParticipant
 import com.example.data.model.RegistrationStatus
@@ -50,6 +51,8 @@ interface SipManager {
     val isSpeakerOn: StateFlow<Boolean>
     val isOnHold: StateFlow<Boolean>
     val callEvents: SharedFlow<CallEvent>
+    /** Audio codecs the engine supports, with the ones currently enabled. */
+    val audioCodecs: StateFlow<List<AudioCodec>>
 
     fun initializeSdk()
     fun applySettings(settings: AppSettings)
@@ -117,6 +120,9 @@ class LinphoneSipManager(
 
     private val _diagnosticLogs = MutableStateFlow<List<String>>(emptyList())
     override val diagnosticLogs: StateFlow<List<String>> = _diagnosticLogs.asStateFlow()
+
+    private val _audioCodecs = MutableStateFlow<List<AudioCodec>>(emptyList())
+    override val audioCodecs: StateFlow<List<AudioCodec>> = _audioCodecs.asStateFlow()
 
     override fun clearLogs() {
         _diagnosticLogs.value = emptyList()
@@ -705,21 +711,9 @@ class LinphoneSipManager(
                 Log.w(TAG, "Transports setup: ${e.message}")
             }
 
-            // Offer only G.711 (+ DTMF). iTelSwitchPlus answers re-INVITEs by echoing the whole
-            // offer instead of picking one codec, so after the conference re-INVITE Linphone
-            // switched that leg to opus while the carrier kept sending PCMU: the caller heard
-            // noise and the other party heard nothing.
-            try {
-                for (pt in newCore.audioPayloadTypes) {
-                    val keep = (pt.mimeType.equals("PCMU", true) || pt.mimeType.equals("PCMA", true) ||
-                        pt.mimeType.equals("telephone-event", true)) && pt.clockRate == 8000
-                    pt.enable(keep)
-                }
-                Log.i(TAG, "Audio codecs: " + newCore.audioPayloadTypes.filter { it.enabled() }
-                    .joinToString { "${it.mimeType}/${it.clockRate}" })
-            } catch (e: Throwable) {
-                Log.w(TAG, "Codec setup: ${e.message}")
-            }
+            // Codecs come from Settings → Audio Codecs. The default is G.711 only: see
+            // AudioCodec.DEFAULT_ENABLED for why (iTelSwitchPlus conference re-INVITEs).
+            applyAudioCodecs(newCore, currentSettings.enabledAudioCodecs)
 
             // Stream hold music to a paused call. Without it no RTP flows while on hold and the
             // switch (iTelSwitchPlus, ~30s RTP timeout) hangs up the held caller, e.g. line 1
@@ -760,6 +754,7 @@ class LinphoneSipManager(
             c.isAdaptiveRateControlEnabled = settings.adaptiveRateControl
             c.isIpv6Enabled = settings.ipv6Enabled
             c.micGainDb = if (settings.micGainBoost) 6.0f else 0.0f
+            applyAudioCodecs(c, settings.enabledAudioCodecs)
             if (settings.stunEnabled && settings.stunServer.isNotBlank()) {
                 c.stunServer = settings.stunServer
                 c.natPolicy?.stunServer = settings.stunServer
@@ -769,6 +764,33 @@ class LinphoneSipManager(
             Log.d(TAG, "Applied audio/network settings: AEC=${settings.echoCancellation}, AdaptiveRate=${settings.adaptiveRateControl}, IPv6=${settings.ipv6Enabled}")
         } catch (e: Throwable) {
             Log.w(TAG, "applySettings failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Enables exactly the chosen codecs (DTMF "telephone-event" always stays on) and publishes
+     * the full list for the Settings screen. An empty or unknown choice falls back to G.711.
+     */
+    private fun applyAudioCodecs(c: Core, chosen: Set<String>) {
+        try {
+            val payloads = c.audioPayloadTypes
+            val available = payloads
+                .filterNot { it.mimeType.equals("telephone-event", true) }
+                .map { AudioCodec.keyOf(it.mimeType, it.clockRate) }
+                .toSet()
+            val wanted = chosen.intersect(available).ifEmpty { AudioCodec.DEFAULT_ENABLED }
+            for (pt in payloads) {
+                val key = AudioCodec.keyOf(pt.mimeType, pt.clockRate)
+                pt.enable(pt.mimeType.equals("telephone-event", true) || key in wanted)
+            }
+            _audioCodecs.value = payloads
+                .filterNot { it.mimeType.equals("telephone-event", true) }
+                .map { AudioCodec(AudioCodec.keyOf(it.mimeType, it.clockRate), it.mimeType, it.clockRate, it.enabled()) }
+                .distinctBy { it.key }
+            Log.i(TAG, "Audio codecs: " + payloads.filter { it.enabled() }
+                .joinToString { "${it.mimeType}/${it.clockRate}" })
+        } catch (e: Throwable) {
+            Log.w(TAG, "Codec setup: ${e.message}")
         }
     }
 

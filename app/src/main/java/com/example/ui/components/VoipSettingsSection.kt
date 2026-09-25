@@ -67,11 +67,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.AppSettings
+import androidx.compose.material3.TextButton
+import com.example.data.model.AudioCodec
 
 @Composable
 fun VoipSettingsSection(
     settings: AppSettings,
     onSettingsChanged: (AppSettings) -> Unit,
+    audioCodecs: List<AudioCodec> = emptyList(),
     onResetDefaults: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -183,6 +186,16 @@ fun VoipSettingsSection(
                 checked = settings.earlyMediaEnabled,
                 testTag = "setting_early_media",
                 onCheckedChange = { onSettingsChanged(settings.copy(earlyMediaEnabled = it)) }
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+            // Section 1b: Audio codecs (like Linphone's Settings → Audio → Codecs)
+            SettingsCategoryHeader(title = "Audio Codecs", icon = Icons.Default.Tune)
+            AudioCodecsList(
+                codecs = audioCodecs,
+                enabledKeys = settings.enabledAudioCodecs,
+                onChange = { onSettingsChanged(settings.copy(enabledAudioCodecs = it)) }
             )
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
@@ -476,6 +489,57 @@ fun VoipSettingsSection(
     }
 }
 
+/**
+ * One switch per codec. At least one codec must stay on; the default is G.711 (PCMU + PCMA),
+ * which every PBX accepts and which keeps iTelSwitchPlus conference calls working.
+ */
+@Composable
+private fun AudioCodecsList(
+    codecs: List<AudioCodec>,
+    enabledKeys: Set<String>,
+    onChange: (Set<String>) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = "Choose which codecs calls may use. Keep G.711 (PCMU/PCMA) on for iTelSwitchPlus: other codecs can break 3-way conference audio there.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+            lineHeight = 16.sp
+        )
+        if (codecs.isEmpty()) {
+            Text(
+                text = "Codec list appears once the SIP engine has started.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        val onKeys = codecs.filter { it.key in enabledKeys }.map { it.key }.toSet()
+        codecs.forEach { codec ->
+            val checked = codec.key in onKeys
+            // The last enabled codec can't be switched off: a call needs at least one
+            val isLastOn = checked && onKeys.size == 1
+            SettingToggleItem(
+                title = codec.displayName,
+                description = if (isLastOn) "${codec.details} • at least one codec must stay on" else codec.details,
+                checked = checked,
+                enabled = !isLastOn,
+                testTag = "setting_codec_${codec.key}",
+                onCheckedChange = { on ->
+                    onChange(if (on) enabledKeys + codec.key else enabledKeys - codec.key)
+                }
+            )
+        }
+        if (codecs.isNotEmpty() && enabledKeys != AudioCodec.DEFAULT_ENABLED) {
+            TextButton(
+                onClick = { onChange(AudioCodec.DEFAULT_ENABLED) },
+                modifier = Modifier.testTag("btn_codecs_default")
+            ) {
+                Text("Use recommended (G.711 only)", fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
 @Composable
 private fun SettingsCategoryHeader(
     title: String,
@@ -508,7 +572,8 @@ private fun SettingToggleItem(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     testTag: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     Row(
         modifier = modifier
@@ -538,6 +603,7 @@ private fun SettingToggleItem(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            enabled = enabled,
             modifier = Modifier.testTag(testTag),
             colors = SwitchDefaults.colors(
                 checkedThumbColor = MaterialTheme.colorScheme.primary,

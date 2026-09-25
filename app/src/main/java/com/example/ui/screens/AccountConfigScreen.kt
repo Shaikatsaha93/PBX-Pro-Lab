@@ -104,6 +104,7 @@ fun AccountConfigScreen(
     val diagnosticLogs by viewModel.diagnosticLogs.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val audioCodecs by viewModel.audioCodecs.collectAsStateWithLifecycle()
     val fcmToken by viewModel.fcmToken.collectAsStateWithLifecycle()
     val fcmTokenStatus by viewModel.fcmTokenStatus.collectAsStateWithLifecycle()
     val receivedPushes by viewModel.receivedPushes.collectAsStateWithLifecycle()
@@ -284,6 +285,7 @@ fun AccountConfigScreen(
 
                     VoipSettingsSection(
                         settings = settings,
+                        audioCodecs = audioCodecs,
                         onSettingsChanged = { viewModel.updateSettings(it) },
                         onResetDefaults = { viewModel.resetSettingsToDefaults() }
                     )
@@ -390,6 +392,7 @@ fun AccountConfigScreen(
 
                 VoipSettingsSection(
                     settings = settings,
+                    audioCodecs = audioCodecs,
                     onSettingsChanged = { viewModel.updateSettings(it) },
                     onResetDefaults = { viewModel.resetSettingsToDefaults() }
                 )

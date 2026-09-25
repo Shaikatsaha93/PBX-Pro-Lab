@@ -7,6 +7,9 @@ data class AppSettings(
     val micGainBoost: Boolean = false,
     val earlyMediaEnabled: Boolean = true,
 
+    // Audio codecs offered in calls (AudioCodec.key, e.g. "PCMU/8000"); DTMF is always on
+    val enabledAudioCodecs: Set<String> = AudioCodec.DEFAULT_ENABLED,
+
     // Dialpad Feedback
     val dtmfKeypadSound: Boolean = true,
     val dtmfHapticFeedback: Boolean = true,
