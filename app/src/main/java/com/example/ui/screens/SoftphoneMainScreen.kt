@@ -44,7 +44,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.example.SoftphoneApp
 import com.example.data.model.CallState
 import com.example.ui.navigation.BottomNavItems
 import com.example.ui.navigation.Screen
@@ -58,24 +57,13 @@ import androidx.compose.ui.graphics.Color
 @Composable
 fun SoftphoneMainScreen(
     viewModel: SoftphoneViewModel,
-    modifier: Modifier = Modifier,
-    openAdminRequest: Boolean = false,
-    onAdminOpened: () -> Unit = {}
+    modifier: Modifier = Modifier
 ) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val isAdmin by SoftphoneApp.instance.licenseManager.isAdmin.collectAsStateWithLifecycle()
-    val navItems = if (isAdmin) BottomNavItems + Screen.Admin else BottomNavItems
-
-    // Opened from a "new access request" notification
-    LaunchedEffect(openAdminRequest, isAdmin) {
-        if (openAdminRequest && isAdmin) {
-            navController.navigate(Screen.Admin.route) { launchSingleTop = true }
-            onAdminOpened()
-        }
-    }
+    val navItems = BottomNavItems
 
     val callState by viewModel.callState.collectAsStateWithLifecycle()
 
@@ -338,10 +326,6 @@ private fun NavHostContent(
 
         composable(Screen.Accounts.route) {
             AccountConfigScreen(viewModel = viewModel)
-        }
-
-        composable(Screen.Admin.route) {
-            AdminScreen()
         }
 
         composable(Screen.ActiveCall.route) {

@@ -2,11 +2,10 @@
 
 A native Android SIP/VoIP softphone for call-center agents, built with Kotlin, Jetpack Compose and the [Linphone SDK](https://www.linphone.org/).
 
-It registers to a SIP server (tested with **iTelSwitchPlus 8.0.0**), places and receives calls, runs 3-way conference calls on the device, and shows the account's prepaid balance on the home screen. Each install must be approved by the admin before it can be used.
+It registers to a SIP server (tested with **iTelSwitchPlus 8.0.0**), places and receives calls, runs 3-way conference calls on the device, and shows the account's prepaid balance on the home screen.
 
 ## Features
 
-- **Admin approval and 30-day subscription:** a new install sends an access request and stays locked until the admin approves it. An approval lasts 30 days, then the app locks itself until renewed. The admin approves, renews and blocks devices from the **Admin** tab on their own phone and gets a notification for each new request. See [Access control (admin approval)](#access-control-admin-approval).
 - **SIP calling:** register over UDP, TCP or TLS, make and receive calls, DTMF keypad, mute, speaker/earpiece, hold.
 - **3-way conference:** add a second party during a call. The call is mixed on the phone by Linphone's local conference. You can remove participants or leave and rejoin the conference.
 - **Account balance:** reads the prepaid balance that iTelSwitchPlus sends on every registration and shows it on the dialer status card, next to the SIP number. The currency (e.g. BDT) comes from the server; other SIP servers send no balance, so none is shown. It refreshes about once a minute and after every call, and turns red below 5.
@@ -30,7 +29,6 @@ It registers to a SIP server (tested with **iTelSwitchPlus 8.0.0**), places and 
 | UI | Jetpack Compose, Material 3, Navigation Compose |
 | SIP / media | Linphone SDK for Android 5.2 (`org.linphone:linphone-sdk-android:5.2.+`) |
 | Storage | Room |
-| Access control | Firebase Authentication (anonymous) and Cloud Firestore |
 | Push | Firebase Cloud Messaging |
 | Build | Android Gradle Plugin 9.1, Gradle 9.3.1 |
 | Android | minSdk 24, targetSdk / compileSdk 36 |
@@ -46,17 +44,15 @@ app/src/main/java/com/example/
 ├── data/
 │   ├── model/      CallState, SipAccount, AccountBalance, AppSettings, …
 │   ├── local/      Room database and DAOs
-│   └── repository/ Accounts, call log, contacts, settings, FCM token,
-│                   LicenseManager (approval, 30-day expiry), AdminManager (Admin tab)
+│   └── repository/ Accounts, call log, contacts, settings, FCM token
 └── ui/
-    ├── screens/    Dialer, Active call, Contacts, History, Account settings,
-    │               LicenseScreen (access request / waiting / disabled), AdminScreen
+    ├── screens/    Dialer, Active call, Contacts, History, Account settings
     ├── components/ Keypad, cards, settings sections
     ├── theme/      Colors, typography, glass style (Glass.kt)
     └── viewmodel/  SoftphoneViewModel
 ```
 
-Almost all call logic is in [`SipManager.kt`](app/src/main/java/com/example/sip/SipManager.kt). The Firestore security rules are in [`firestore.rules`](firestore.rules).
+Almost all call logic is in [`SipManager.kt`](app/src/main/java/com/example/sip/SipManager.kt).
 
 ## Design
 
@@ -138,93 +134,9 @@ When registration succeeds, the dialer shows **SIP Online • Ready to Call** an
 
 A is not put on SIP hold while B rings; see the server notes below for why.
 
-## Access control (admin approval)
+## Installing without a cable
 
-Nobody can use the app without the admin's approval. It works like a monthly subscription: an approval is valid for 30 days, then the app locks itself until the admin approves it again. The admin manages everything from the **Admin** tab in the app, or from the Firebase console.
-
-### How it works
-
-1. On first start the app signs in to Firebase anonymously. Every install gets its own ID, shown on screen as **Device ID**. No password or OTP is needed.
-2. The user enters a name and phone number and taps **Send request**. The app creates `devices/{uid}` in Cloud Firestore with `approved: false` and shows **Waiting for approval**. The dialer does not open.
-3. The admin's phone gets a **New access request** notification. The admin taps **Approve 30 days**.
-4. Within a second the user's app opens the dialer and registers the SIP account.
-5. After 30 days the app locks again (**Access disabled**), unregisters SIP and sets `approved` back to `false`. The admin approves again for another 30 days, or extends the date at any time.
-
-| Record | App |
-|---|---|
-| No record | Request form |
-| `approved: false`, never approved | Waiting for approval |
-| `approved: true`, `expiresAt` in the future | App works |
-| `approved: true`, no `expiresAt` | App works and sets `expiresAt` = today + 30 days itself |
-| `approved: true`, `expiresAt` passed | **Access disabled**; the app sets `approved: false` |
-| `approved: false` after being approved | **Access disabled** (blocked) |
-
-Three days before `expiresAt` the app shows a reminder on start. A blocked or expired user can tap **Check again** after the admin renews.
-
-### Admin tab (manage from a phone)
-
-Sign in once with the admin account: **Settings → Admin → Sign in**. The **Admin sign in** link on the approval screen does the same. The **Admin** tab then appears in the bottom bar; agents never see it. A phone signed in as admin is always allowed and needs no approval.
-
-- The list shows every device with name, phone number, phone model, status (**Pending**, **Active**, **Expired**, **Off**) and days left. Filters: All, Pending, Active, Off.
-- **Approve 30 days** for a pending, expired or blocked device.
-- **+30 days** and **Block** for an active device.
-- The **⋮** menu offers **+90 days**, **+1 year**, **No time limit** (valid until 2099) and **Delete**.
-- A notification arrives for each new request while the admin phone is running the app. Tapping it opens the Admin tab.
-- The sign-out icon at the top leaves admin mode. The phone then needs a normal access request.
-
-The admin email is set in `LicenseManager.ADMIN_EMAIL` and in `isAdmin()` in [`firestore.rules`](firestore.rules). Change both to use another admin account. The password is not in the code. It lives only in Firebase Authentication.
-
-### Security
-
-The rules in [`firestore.rules`](firestore.rules) make sure that:
-
-- only the admin account (email/password sign-in) can list, approve, renew, block and delete records;
-- an install can read only its own record, and can create it only for itself, with `approved: false` and only the fields `name`, `phone`, `device`, `approved` and `createdAt`;
-- the app can make exactly two changes to its own record: set `expiresAt` to 29–30 days from now right after approval, and set `approved: false` once `expiresAt` has passed. Nobody can approve themselves or extend their own date;
-- once a record is expired, or switched off while it holds a SIP password, the app cannot read it at all.
-
-`approved` is a boolean, so the Firebase console shows a **true / false** dropdown and there is nothing to mistype.
-
-The check runs in the app, so a modified APK could skip it. For full protection, give agents their SIP account through the record (below) instead of telling them the password. Then a blocked or modified app has no SIP account to use.
-
-### One-time Firebase setup
-
-In the [Firebase console](https://console.firebase.google.com), project `fir-7eb9d`:
-
-1. **Authentication → Sign-in method → Add new provider → Anonymous → Enable → Save.** Leave *Auto clean-up* off, otherwise approved installs lose their ID after 30 days.
-2. **Authentication → Sign-in method → Add new provider → Email/Password → Enable → Save.** Leave *Email link* off.
-3. **Authentication → Users → Add user** with the admin email and a strong password.
-4. **Firestore Database → Create database.** Choose location `asia-south1` (Mumbai) and production mode.
-5. **Firestore Database → Rules:** paste the contents of [`firestore.rules`](firestore.rules) and click **Publish**.
-
-The free Spark plan is enough; no Cloud Functions are needed.
-
-### Managing records in the Firebase console
-
-Everything in the Admin tab can also be done in **Firestore Database → Data → devices**. Each request is one document whose ID starts with the Device ID shown in the app.
-
-| Task | What to change |
-|---|---|
-| Approve for 30 days | `approved` → `true` (leave `expiresAt` out; the app adds it) |
-| Block | `approved` → `false` |
-| Set or extend the date | `expiresAt`, type **timestamp** |
-| No time limit | `expiresAt` far in the future, e.g. 2099 |
-
-**Give the SIP account from Firebase (optional).** Add these fields to the approved record. The app saves the account, makes it active and registers. It deletes it again when access ends.
-
-| Field | Type | Example |
-|---|---|---|
-| `sipUsername` | string | `09678771660` |
-| `sipPassword` | string | the SIP password |
-| `sipDomain` | string | `203.76.101.50` |
-| `sipPort` | number | `5060` (optional) |
-| `sipDisplayName` | string | optional |
-
-**Reinstalling** the app creates a new Device ID, so the user has to send a new request. Updating the app keeps the ID.
-
-### Installing without a cable
-
-Build the release APK (see [Signing](#signing)) and send the file to the phone as a **document** through WhatsApp, Telegram *Saved Messages* or Google Drive. Open it on the phone, allow *Install unknown apps* for that app, and choose **Install anyway** if Play Protect warns. Install it over the old app as an update; uninstalling first creates a new Device ID.
+Build the release APK (see [Signing](#signing)) and send the file to the phone as a **document** through WhatsApp, Telegram *Saved Messages* or Google Drive. Open it on the phone, allow *Install unknown apps* for that app, and choose **Install anyway** if Play Protect warns. Install it over the old app as an update.
 
 ## Receiving calls in the background
 
@@ -319,7 +231,5 @@ These behaviours were found in SIP traces and shaped the implementation:
   adb logcat -s LinphoneSipManager LinphoneSdk
   ```
   During a conference, `[Conf Stats]` lines appear every 2 seconds with each leg's codec, direction and bandwidth. `in=0.0kbps` on a leg means that party's audio is not reaching the phone.
-- **Calls are missed when the phone is locked.** Open **Settings → Background & Lock Screen** and make sure both items show a green tick. Check that the *SIP Softphone Standby* notification is present. On Xiaomi, Oppo, Vivo, Realme and Samsung phones also allow Autostart.
-- **Admin tab shows "Cannot load requests".** Sign in with the exact email in `firestore.rules`, and check that those rules are published and Email/Password sign-in is enabled.
-- **App shows "Access disabled" although the record says approved.** `approved` must be a **boolean** `true`, not the text `"true"`. If `expiresAt` is set, it must be a **timestamp** in the future. Check that the rules from `firestore.rules` are published. Then tap **Check again**.
+- **Calls are missed when the phone is locked.** Open **Settings → Background & Lock Screen** and make sure both items show a green tick. Check that the app is running (the *Background standby* notification can be hidden). On Xiaomi, Oppo, Vivo, Realme and Samsung phones also allow Autostart.
 - **Registration fails.** The Settings screen shows the SIP error code: 401/407 for wrong credentials, 403 for a forbidden or blocked account, 404 for an unknown user, 408 for an unreachable server.

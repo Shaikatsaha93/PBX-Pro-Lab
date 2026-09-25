@@ -5,10 +5,7 @@ import android.util.Log
 import com.example.data.local.AppDatabase
 import com.example.data.model.CallType
 import com.example.data.repository.CallLogRepository
-import com.example.data.repository.AdminManager
 import com.example.data.repository.FcmTokenManager
-import com.example.data.repository.LicenseManager
-import com.example.data.repository.LicenseState
 import com.example.data.repository.SettingsRepository
 import com.example.data.repository.SipAccountRepository
 import com.example.service.SipForegroundService
@@ -20,7 +17,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -44,10 +40,6 @@ class SoftphoneApp : Application() {
         private set
     lateinit var contactsRepository: com.example.data.repository.ContactsRepository
         private set
-    lateinit var licenseManager: LicenseManager
-        private set
-    lateinit var adminManager: AdminManager
-        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -65,10 +57,6 @@ class SoftphoneApp : Application() {
         telecomHelper.registerPhoneAccount()
         sipManager.initializeSdk()
         fcmTokenManager.initialize()
-        // After FcmTokenManager, which initializes FirebaseApp
-        licenseManager = LicenseManager(this, accountRepository)
-        licenseManager.start()
-        adminManager = AdminManager(this)
         if (contactsRepository.hasContactsPermission()) {
             applicationScope.launch {
                 contactsRepository.loadContacts()
@@ -76,16 +64,12 @@ class SoftphoneApp : Application() {
         }
 
         observeActiveAccount()
-        observeAdmin()
         observeCallEvents()
     }
 
     private fun observeActiveAccount() {
         applicationScope.launch {
-            // Register only while the admin has approved this install
-            combine(accountRepository.activeAccount, licenseManager.state) { account, license ->
-                account.takeIf { license is LicenseState.Approved }
-            }.distinctUntilChanged().collectLatest { activeAcc ->
+            accountRepository.activeAccount.distinctUntilChanged().collectLatest { activeAcc ->
                 if (activeAcc != null) {
                     Log.d("SoftphoneApp", "Auto-registering active account: ${activeAcc.username}@${activeAcc.domain}")
                     sipManager.registerAccount(activeAcc)
@@ -97,15 +81,6 @@ class SoftphoneApp : Application() {
                 } else {
                     sipManager.unregisterCurrentAccount()
                 }
-            }
-        }
-    }
-
-    /** The admin's phone watches access requests (and notifies about new ones) while signed in. */
-    private fun observeAdmin() {
-        applicationScope.launch(Dispatchers.Main) {
-            licenseManager.isAdmin.collect { admin ->
-                if (admin) adminManager.startWatching() else adminManager.stopWatching()
             }
         }
     }

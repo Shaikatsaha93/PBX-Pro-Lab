@@ -83,7 +83,6 @@ import com.example.data.model.AppThemeMode
 import com.example.data.model.RegistrationStatus
 import com.example.data.model.SipAccount
 import com.example.data.model.SipTransport
-import com.example.ui.components.AdminAccessCard
 import com.example.ui.components.AccountCard
 import com.example.ui.components.FcmPushSection
 import com.example.ui.components.ThemeModeSelector
@@ -118,7 +117,8 @@ fun AccountConfigScreen(
     var displayName by remember { mutableStateOf("") }
     var selectedTransport by remember { mutableStateOf(SipTransport.UDP) }
     var passwordVisible by remember { mutableStateOf(false) }
-    var showForm by remember { mutableStateOf(allAccounts.isEmpty()) }
+    // Closed by default; the form still shows when there are no accounts (see the visible = checks)
+    var showForm by remember { mutableStateOf(false) }
     // Id of the account being edited; null while adding a new one
     var editingAccountId by remember { mutableStateOf<Long?>(null) }
     var accountPendingDelete by remember { mutableStateOf<SipAccount?>(null) }
@@ -302,7 +302,6 @@ fun AccountConfigScreen(
                         }
                     )
 
-                    AdminAccessCard()
                 }
             }
         } else {
@@ -409,7 +408,6 @@ fun AccountConfigScreen(
                     }
                 )
 
-                AdminAccessCard()
 
                 Spacer(modifier = Modifier.height(16.dp))
             }

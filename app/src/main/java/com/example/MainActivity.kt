@@ -4,9 +4,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
-import android.widget.Toast
-import java.text.DateFormat
-import java.util.concurrent.TimeUnit
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -15,15 +12,11 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.AppThemeMode
 import com.example.data.model.CallState
-import com.example.data.repository.LicenseState
 import com.example.service.BackgroundReliability
 import com.example.service.SipForegroundService
-import com.example.ui.screens.LicenseScreen
 import com.example.ui.screens.SoftphoneMainScreen
 import com.example.ui.theme.SoftphoneTheme
 import com.example.ui.viewmodel.SoftphoneViewModel
@@ -32,15 +25,11 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: SoftphoneViewModel by viewModels { SoftphoneViewModel.Factory }
 
-    /** Set when opened from a "new access request" notification. */
-    private var openAdminRequest by mutableStateOf(false)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
         configureLockScreenFlags()
-        openAdminRequest = intent?.getBooleanExtra(EXTRA_OPEN_ADMIN, false) == true
 
         setContent {
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
@@ -81,34 +70,8 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
 
-            val license by SoftphoneApp.instance.licenseManager.state.collectAsStateWithLifecycle()
-
-            // Warn once per launch when the subscription ends within 3 days
-            LaunchedEffect((license as? LicenseState.Approved)?.expiresAt) {
-                val expiresAt = (license as? LicenseState.Approved)?.expiresAt ?: return@LaunchedEffect
-                val daysLeft = TimeUnit.MILLISECONDS.toDays(expiresAt.time - System.currentTimeMillis())
-                if (daysLeft < 3) {
-                    val date = DateFormat.getDateInstance(DateFormat.MEDIUM).format(expiresAt)
-                    Toast.makeText(this@MainActivity, "Subscription ends on $date. Contact the admin to renew.", Toast.LENGTH_LONG).show()
-                }
-            }
-
             SoftphoneTheme(darkTheme = isDarkTheme) {
-                if (license is LicenseState.Approved) {
-                    SoftphoneMainScreen(
-                        viewModel = viewModel,
-                        openAdminRequest = openAdminRequest,
-                        onAdminOpened = { openAdminRequest = false }
-                    )
-                } else {
-                    val licenseManager = SoftphoneApp.instance.licenseManager
-                    LicenseScreen(
-                        state = license,
-                        installId = licenseManager.installId,
-                        onSubmit = licenseManager::submitRequest,
-                        onRetry = licenseManager::refresh
-                    )
-                }
+                SoftphoneMainScreen(viewModel = viewModel)
             }
         }
     }
@@ -130,15 +93,6 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent.getBooleanExtra(EXTRA_OPEN_ADMIN, false)) openAdminRequest = true
-    }
-
-    override fun onStart() {
-        super.onStart()
-        // A blocked/offline install re-checks each time the app is opened
-        val licenseManager = SoftphoneApp.instance.licenseManager
-        val state = licenseManager.state.value
-        if (state is LicenseState.Denied || state is LicenseState.Error) licenseManager.refresh()
     }
 
     private fun configureLockScreenFlags() {
@@ -153,9 +107,5 @@ class MainActivity : ComponentActivity() {
                 WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             )
         }
-    }
-
-    companion object {
-        const val EXTRA_OPEN_ADMIN = "open_admin"
     }
 }
