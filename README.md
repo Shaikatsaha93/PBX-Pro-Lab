@@ -91,13 +91,13 @@ The glass panels are translucent but do not blur the content behind them. The ba
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/Shaikatsaha93/Dialer.git
+   git clone https://github.com/Shaikatsaha93/PBX-Pro-Lab.git
    ```
 2. Open the folder in Android Studio and let Gradle sync.
 3. Put your `google-services.json` in `app/`.
 4. Run the `app` configuration on a device or emulator.
 
-The Gradle wrapper scripts (`gradlew`, `gradlew.bat`, `gradle-wrapper.jar`) are not in the repository yet. Android Studio creates them, or you can run `gradle wrapper` once. After that you can build from the command line:
+The Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle-wrapper.jar`) is included, so you can also build from the command line:
 
 ```bash
 ./gradlew :app:assembleDebug        # build the APK
