@@ -1,0 +1,8 @@
+{
+  "name": "PBX Pro Lab",
+  "description": "PBX Pro Lab - Premium native SIP/VoIP softphone with DTMF keypad, multi-account management, telecom integration, and call history.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
