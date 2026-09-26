@@ -42,7 +42,9 @@ sealed class CallState {
         val isOnHold: Boolean = false,
         val isConference: Boolean = false,
         val participants: List<ConferenceParticipant> = emptyList(),
-        val secondaryCall: SecondaryCallInfo? = null
+        val secondaryCall: SecondaryCallInfo? = null,
+        /** Codec negotiated for this call, e.g. "PCMU/8000" (empty until media starts). */
+        val audioCodec: String = ""
     ) : CallState()
 
     data class Disconnected(

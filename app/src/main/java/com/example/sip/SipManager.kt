@@ -122,6 +122,8 @@ class LinphoneSipManager(
     override val diagnosticLogs: StateFlow<List<String>> = _diagnosticLogs.asStateFlow()
 
     private val _audioCodecs = MutableStateFlow<List<AudioCodec>>(emptyList())
+    // Codecs enabled in the engine last time (null before the first apply)
+    private var appliedCodecKeys: Set<String>? = null
     override val audioCodecs: StateFlow<List<AudioCodec>> = _audioCodecs.asStateFlow()
 
     override fun clearLogs() {
@@ -358,6 +360,9 @@ class LinphoneSipManager(
 
             when (state) {
                 Call.State.IncomingReceived, Call.State.IncomingEarlyMedia -> {
+                    if (state == Call.State.IncomingReceived) {
+                        addDiagnosticLog("[Codec] Incoming call, accepting: ${offeredCodecsText(core)}")
+                    }
                     _callState.value = CallState.Incoming(remoteAddress, remoteDisplayName)
                     emitCallStarted(remoteAddress, remoteDisplayName, incoming = true)
                     scope.launch {
@@ -384,6 +389,10 @@ class LinphoneSipManager(
                         startDurationTimer()
                     }
                     val existingConnected = _callState.value as? CallState.Connected
+                    val codec = usedCodec(call) ?: existingConnected?.audioCodec.orEmpty()
+                    if (codec.isNotBlank() && codec != existingConnected?.audioCodec) {
+                        addDiagnosticLog("[Codec] Call using $codec")
+                    }
                     _callState.value = CallState.Connected(
                         remoteUri = remoteAddress,
                         displayName = remoteDisplayName,
@@ -393,7 +402,8 @@ class LinphoneSipManager(
                         isOnHold = _isOnHold.value,
                         isConference = existingConnected?.isConference ?: false,
                         participants = existingConnected?.participants ?: emptyList(),
-                        secondaryCall = existingConnected?.secondaryCall
+                        secondaryCall = existingConnected?.secondaryCall,
+                        audioCodec = codec
                     )
                 }
                 Call.State.Pausing, Call.State.Paused -> {
@@ -789,10 +799,32 @@ class LinphoneSipManager(
                 .distinctBy { it.key }
             Log.i(TAG, "Audio codecs: " + payloads.filter { it.enabled() }
                 .joinToString { "${it.mimeType}/${it.clockRate}" })
+
+            val previous = appliedCodecKeys
+            appliedCodecKeys = wanted
+            if (previous != null && previous != wanted) {
+                addDiagnosticLog("[Codec] Now offering: ${offeredCodecsText(c)}")
+                // Codecs travel in each call's SDP, not in REGISTER. Re-register anyway so the
+                // account is refreshed on the server as soon as the choice changes.
+                if (c.callsNb == 0 && c.defaultAccount != null) {
+                    c.refreshRegisters()
+                    addDiagnosticLog("[Codec] Re-registering with the server")
+                }
+            }
         } catch (e: Throwable) {
             Log.w(TAG, "Codec setup: ${e.message}")
         }
     }
+
+    /** Enabled codecs in offer order, e.g. "PCMU/8000, PCMA/8000". */
+    private fun offeredCodecsText(c: Core): String =
+        c.audioPayloadTypes
+            .filter { it.enabled() && !it.mimeType.equals("telephone-event", true) }
+            .joinToString { "${it.mimeType}/${it.clockRate}" }
+
+    /** Codec the server and phone agreed on for this call, e.g. "PCMU/8000". */
+    private fun usedCodec(call: Call): String? =
+        call.currentParams?.usedAudioPayloadType?.let { "${it.mimeType}/${it.clockRate}" }
 
     override fun registerAccount(account: SipAccount) {
         activeAccountModel = account
@@ -1039,6 +1071,7 @@ class LinphoneSipManager(
             val dialLog = "[SIP Call] Dialing: ${address.asStringUriOnly()} via ${account?.params?.identityAddress?.asStringUriOnly() ?: "default transport"}"
             Log.i(TAG, dialLog)
             _diagnosticLogs.value = (_diagnosticLogs.value + dialLog).takeLast(50)
+            addDiagnosticLog("[Codec] Offering: ${offeredCodecsText(c)}")
 
             val call = if (callParams != null) {
                 c.inviteAddressWithParams(address, callParams)

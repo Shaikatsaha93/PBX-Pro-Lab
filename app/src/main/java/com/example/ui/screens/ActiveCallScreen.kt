@@ -158,6 +158,16 @@ fun ActiveCallScreen(
         }
     }
 
+    // e.g. "PCMU/8000" -> "G.711 µ-law (PCMU)", shown in the chip at the top of the call
+    val activeCodecLabel = (callState as? CallState.Connected)?.audioCodec
+        ?.takeIf { it.isNotBlank() }
+        ?.let { key ->
+            val mime = key.substringBefore("/")
+            val rate = key.substringAfter("/").toIntOrNull() ?: 8000
+            com.example.data.model.AudioCodec(key, mime, rate, true).displayName
+        }
+        .orEmpty()
+
     val isCallActive = callState is CallState.Connected || callState is CallState.Outgoing
     val isConference = (callState as? CallState.Connected)?.isConference == true
     val secondaryCall = (callState as? CallState.Connected)?.secondaryCall
@@ -256,7 +266,11 @@ fun ActiveCallScreen(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (isConference) "CONFERENCE" else "HD SIP",
+                                text = when {
+                                    isConference -> "CONFERENCE"
+                                    activeCodecLabel.isNotBlank() -> activeCodecLabel
+                                    else -> "SIP"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
