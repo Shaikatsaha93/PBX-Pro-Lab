@@ -18,7 +18,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.example.ctbd.firebase"
+    applicationId = "com.pbxprolab.softphone"
     minSdk = 24
     targetSdk = 36
     // Set by .github/workflows/release.yml (each release must be higher than the last)
@@ -58,7 +58,7 @@ android {
     }
     debug {
       // Separate app ID so the debug build installs next to the existing release app
-      applicationIdSuffix = ".pbxprolab"
+      applicationIdSuffix = ".debug"
       signingConfig = signingConfigs.getByName("debugConfig")
       // Phones (arm64) and the x86_64 emulator
       if (!abiSplits) ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
