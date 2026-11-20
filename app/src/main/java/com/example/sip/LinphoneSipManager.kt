@@ -822,11 +822,10 @@ class LinphoneSipManager(
             // The SDK's CoreManager iterates the core on the main thread. The core is not
             // thread-safe, so never iterate it from another thread as well.
             newCore.isAutoIterateEnabled = true
-            // With the app in the background the SDK iterates only every 500 ms by default, so
-            // every SIP request (the switch's qualify OPTIONS, an incoming INVITE, a BYE) waited
-            // up to half a second for an answer: the switch showed 1010 at 535 ms. 20 ms is the
-            // foreground rate; the CPU still sleeps between iterations when the phone is idle.
-            newCore.autoIterateBackgroundSchedule = 20
+            // In the background the SDK iterates every 500 ms by default, which delayed SIP answers
+            // (the switch showed 1010 at 535 ms). 20 ms fixed that but woke the CPU 50 times a second
+            // all day and was the main battery drain. 100 ms answers fast enough and wakes it 5x less.
+            newCore.autoIterateBackgroundSchedule = 100
 
             newCore.addListener(coreListener)
             newCore.start()

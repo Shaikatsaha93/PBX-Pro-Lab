@@ -46,7 +46,7 @@ class SipForegroundService : Service() {
         super.onCreate()
         isRunning = true
         createNotificationChannels()
-        acquireLocks()
+        acquireWakeLock()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -95,7 +95,7 @@ class SipForegroundService : Service() {
     }
 
     @SuppressLint("WakelockTimeout")
-    private fun acquireLocks() {
+    private fun acquireWakeLock() {
         try {
             if (wakeLock == null) {
                 val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -111,7 +111,14 @@ class SipForegroundService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "Could not acquire WakeLock: ${e.message}")
         }
+    }
 
+    /**
+     * The low-latency Wi-Fi lock keeps the Wi-Fi radio at full power, which drains the battery all
+     * day. It is held only while a call is up; standby relies on the CPU wake lock and keep-alives.
+     */
+    @SuppressLint("WakelockTimeout")
+    private fun acquireWifiLock() {
         try {
             if (wifiLock == null) {
                 val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -128,6 +135,17 @@ class SipForegroundService : Service() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Could not acquire WifiLock: ${e.message}")
+        }
+    }
+
+    private fun releaseWifiLock() {
+        try {
+            wifiLock?.let {
+                if (it.isHeld) it.release()
+            }
+            wifiLock = null
+        } catch (e: Exception) {
+            Log.w(TAG, "Error releasing WifiLock: ${e.message}")
         }
     }
 
@@ -155,6 +173,7 @@ class SipForegroundService : Service() {
         stateCollectJob?.cancel()
         stateCollectJob = scope.launch {
             SoftphoneApp.instance.sipManager.callState.collectLatest { state ->
+                if (state is CallState.Idle || state is CallState.Disconnected) releaseWifiLock() else acquireWifiLock()
                 val keepAlive = SoftphoneApp.instance.settingsRepository.settings.value.backgroundKeepAlive
                 when (state) {
                     is CallState.Idle -> {
@@ -168,15 +187,15 @@ class SipForegroundService : Service() {
                         }
                     }
                     is CallState.Incoming -> {
-                        acquireLocks()
+                        acquireWakeLock()
                         updateNotification("Incoming SIP Call", state.displayName.ifBlank { state.remoteUri }, isOngoingCall = true, isIncoming = true)
                     }
                     is CallState.Outgoing -> {
-                        acquireLocks()
+                        acquireWakeLock()
                         updateNotification("Calling...", state.displayName.ifBlank { state.remoteUri }, isOngoingCall = true)
                     }
                     is CallState.Connected -> {
-                        acquireLocks()
+                        acquireWakeLock()
                         val durationText = formatSeconds(state.durationSeconds)
                         val title = if (state.isConference) {
                             "👥 Conference Call (${state.participants.size + 1} parties) [$durationText]"
