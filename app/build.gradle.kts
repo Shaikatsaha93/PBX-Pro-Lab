@@ -9,6 +9,10 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+// -PabiSplits (the release workflow): one APK per phone CPU type plus a universal one, so each
+// phone downloads only the native code it runs (Linphone ships ~30 MB of it per CPU type)
+val abiSplits = providers.gradleProperty("abiSplits").isPresent
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -17,8 +21,9 @@ android {
     applicationId = "com.example.ctbd.firebase"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    // Set by .github/workflows/release.yml (each release must be higher than the last)
+    versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
+    versionName = System.getenv("VERSION_NAME") ?: "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -28,7 +33,7 @@ android {
       val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
       storeFile = file(keystorePath)
       storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
+      keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
       keyPassword = System.getenv("KEY_PASSWORD")
     }
     create("debugConfig") {
@@ -49,62 +54,46 @@ android {
       signingConfig = signingConfigs.getByName("release")
       // Real phones only: 64-bit ARM (almost every phone) and 32-bit ARM (old phones).
       // Linphone ships ~30 MB of native code per ABI, so x86/x86_64 would double the APK.
-      ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+      if (!abiSplits) ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
     debug {
       // Separate app ID so the debug build installs next to the existing release app
       applicationIdSuffix = ".pbxprolab"
       signingConfig = signingConfigs.getByName("debugConfig")
-      // This build is the one installed on phones, so shrink it like release:
-      // without R8 the unused Compose/Material icon code alone is ~20 MB of dex.
-      isMinifyEnabled = true
-      isShrinkResources = true
-      proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      // Phones only (64-bit ARM). Add "x86_64" back here to run on an x86_64 emulator.
-      ndk { abiFilters += listOf("arm64-v8a") }
+      // Phones (arm64) and the x86_64 emulator
+      if (!abiSplits) ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+    }
+  }
+  splits {
+    abi {
+      isEnable = abiSplits
+      reset()
+      include("arm64-v8a", "armeabi-v7a")
+      // For phones whose app is older than per-CPU updates (they download update.json's apkUrl)
+      isUniversalApk = true
     }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
   }
+  androidResources {
+    // Linphone's sample ringtones (7.6 MB): calls ring with the phone's own ringtone
+    // (native ringing); the .wav tones (ringback, hold music) stay
+    ignoreAssetsPatterns += "!*.mkv"
+  }
   buildFeatures {
     compose = true
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
-  // One APK per CPU type for release (app-arm64-v8a-release.apk, app-armeabi-v7a-release.apk),
-  // so each phone only downloads the native code it can run.
-  splits {
-    abi {
-      isEnable = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
-      reset()
-      include("arm64-v8a", "armeabi-v7a")
-      isUniversalApk = false
-    }
-  }
-  androidResources {
-    // Linphone sounds the app never plays (~8 MB). Kept: the default ringtone
-    // (notes_of_the_optimistic.mkv), ringback.wav and toy-mono.wav (hold music, see SipManager).
-    ignoreAssetsPatterns += listOf(
-      "dont_wait_too_long.mkv",
-      "its_a_game.mkv",
-      "soft_as_snow.mkv",
-      "house_keeping.mkv",
-      "four_hands_together.mkv",
-      "leaving_dreams.mkv",
-      "oldphone-mono.wav",
-      "hello16000.wav",
-      "hello8000.wav",
-      "incoming_chat.wav"
-    )
-  }
   packaging {
     jniLibs {
       excludes += "**/libmsandroidcamera2.so"
-      // Linphone's own test suites; nothing in the app loads them
+      // Linphone's self-test library: nothing loads it (about 7 MB)
       excludes += "**/liblinphonetester.so"
-      excludes += "**/libbctoolbox-tester.so"
+      // Emulator-only CPU types stay out of the universal APK
+      if (abiSplits) excludes += listOf("lib/x86/**", "lib/x86_64/**")
       // Store native libs compressed in the APK (about half the download size);
       // Android extracts them once at install time.
       useLegacyPackaging = true
@@ -130,6 +119,8 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 // (Retrofit/Moshi/OkHttp, Firebase AI and App Check were never used and only added APK size).
 // This makes it easy to add them back in the future if needed.
 dependencies {
+  // Screens, models, database and chat shared with the Windows app
+  implementation(project(":shared"))
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
@@ -150,7 +141,9 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.androidx.navigation.compose)
-  implementation("org.linphone:linphone-sdk-android:5.2.+")
+  // Exact version: "5.2.+" made every build list versions on all Linphone servers, and the build
+  // failed whenever one of them (gitlab.linphone.org) was down
+  implementation("org.linphone:linphone-sdk-android:5.2.112")
   implementation(libs.androidx.media)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
@@ -160,7 +153,8 @@ dependencies {
   implementation(libs.firebase.messaging)
   // GoogleApiAvailability for the FCM Play Services check (came in via App Check before)
   implementation("com.google.android.gms:play-services-base:18.9.0")
-  // Uncomment these three (plus libs.firebase.auth) to use Google Sign-In via Credential Manager:
+
+  // Uncomment these three (firebase-auth is already on) to use Google Sign-In via Credential Manager:
   // implementation(libs.androidx.credentials)
   // implementation(libs.androidx.credentials.play.services)
   // implementation(libs.googleid)

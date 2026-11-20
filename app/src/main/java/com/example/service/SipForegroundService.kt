@@ -160,12 +160,7 @@ class SipForegroundService : Service() {
                     is CallState.Idle -> {
                         if (keepAlive) {
                             val regStatus = SoftphoneApp.instance.sipManager.registrationState.value
-                            val sub = if (regStatus == RegistrationStatus.REGISTERED) {
-                                "Ready for calls"
-                            } else {
-                                "Waiting for calls"
-                            }
-                            updateStandbyNotification(sub)
+                            updateNotification(STANDBY_TITLE, standbyText(regStatus), isOngoingCall = false)
                         } else {
                             releaseLocks()
                             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -214,16 +209,17 @@ class SipForegroundService : Service() {
                 val callState = SoftphoneApp.instance.sipManager.callState.value
                 val keepAlive = SoftphoneApp.instance.settingsRepository.settings.value.backgroundKeepAlive
                 if (callState is CallState.Idle && keepAlive) {
-                    val message = when (regState) {
-                        RegistrationStatus.REGISTERED -> "Ready for calls"
-                        RegistrationStatus.REGISTERING -> "Connecting…"
-                        RegistrationStatus.FAILED -> "Can't connect • Retrying"
-                        RegistrationStatus.UNREGISTERED -> "Offline"
-                    }
-                    updateStandbyNotification(message)
+                    updateNotification(STANDBY_TITLE, standbyText(regState), isOngoingCall = false)
                 }
             }
         }
+    }
+
+    private fun standbyText(status: RegistrationStatus) = when (status) {
+        RegistrationStatus.REGISTERED -> "Ready for calls"
+        RegistrationStatus.REGISTERING -> "Connecting..."
+        RegistrationStatus.FAILED -> "Reconnecting..."
+        RegistrationStatus.UNREGISTERED -> "Offline"
     }
 
     private fun startForegroundWithNotification(title: String, text: String) {
@@ -257,45 +253,51 @@ class SipForegroundService : Service() {
      */
     private fun serviceType(inCall: Boolean): Int = when {
         Build.VERSION.SDK_INT < Build.VERSION_CODES.Q -> 0
-        inCall || Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+        inCall -> ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or microphoneType()
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
         else -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
     }
 
     /**
-     * Calls and standby use different notification ids. Otherwise, with the standby channel
-     * turned off by the user, the standby notice that replaces a finished call is never shown
-     * and the old "Incoming call • Answer / Decline" notification stays stuck in the shade.
+     * During a call also "microphone": Android 11+ only lets a background app record while a
+     * foreground service of that type runs, otherwise the other side hears silence once the
+     * screen locks. Only with the permission granted, or startForeground throws.
      */
+    private fun microphoneType(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
+
     private fun showForeground(notification: Notification, inCall: Boolean) {
         val type = serviceType(inCall)
-        val id = if (inCall) CALL_NOTIFICATION_ID else NOTIFICATION_ID
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (type == foregroundType && id == foregroundId) {
-            manager.notify(id, notification)
+        if (type == foregroundType) {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIFICATION_ID, notification)
             return
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(id, notification, type)
+                startForeground(NOTIFICATION_ID, notification, type)
             } else {
-                startForeground(id, notification)
+                startForeground(NOTIFICATION_ID, notification)
             }
             foregroundType = type
-            foregroundId = id
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException starting foreground service: ${e.message}")
             try {
-                startForeground(id, notification)
-                foregroundId = id
+                // Microphone type refused (started from the background): keep the call service at least
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && type != ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL && inCall) {
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+                    foregroundType = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+                    return
+                }
+                startForeground(NOTIFICATION_ID, notification)
             } catch (fallbackError: Throwable) {
                 Log.e(TAG, "Fallback startForeground error: ${fallbackError.message}")
             }
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to start foreground service: ${e.message}")
         }
-        // Back on standby: the call notification is no longer the service's, so it can be removed
-        if (!inCall) manager.cancel(CALL_NOTIFICATION_ID)
     }
 
     private fun updateNotification(
@@ -336,26 +338,12 @@ class SipForegroundService : Service() {
             .setContentText(text)
             .setSmallIcon(android.R.drawable.sym_call_outgoing)
             .setContentIntent(openAppPendingIntent)
-
-        if (isCall) {
-            builder
-                .setOngoing(true)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setCategory(NotificationCompat.CATEGORY_CALL)
-        } else {
-            // Android requires a notification for the standby service; keep it out of the way:
-            // no status-bar icon, hidden on the lock screen, folded at the bottom of the shade,
-            // and swipe-away where Android allows it (13+). The service keeps running.
-            builder
-                .setOngoing(false)
-                .setSilent(true)
-                .setShowWhen(false)
-                .setPriority(NotificationCompat.PRIORITY_MIN)
-                .setVisibility(NotificationCompat.VISIBILITY_SECRET)
-                .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_DEFERRED)
-        }
+            .setOngoing(true)
+            .setSilent(!isCall)
+            .setShowWhen(isCall)
+            .setPriority(if (isCall) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_MIN)
+            .setVisibility(if (isCall) NotificationCompat.VISIBILITY_PUBLIC else NotificationCompat.VISIBILITY_SECRET)
+            .setCategory(if (isCall) NotificationCompat.CATEGORY_CALL else NotificationCompat.CATEGORY_SERVICE)
 
         if (isIncoming) {
             val answerIntent = Intent(this, SipForegroundService::class.java).apply { action = ACTION_ANSWER }
@@ -405,22 +393,25 @@ class SipForegroundService : Service() {
                 setSound(null, null)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
+            // Android requires a notification while the app waits for calls in the background.
+            // "Min" importance keeps it out of the way: no status-bar icon, not on the lock
+            // screen, folded into one line at the bottom of the notification shade.
             val standbyChannel = NotificationChannel(
                 CHANNEL_STANDBY_ID,
                 "Background standby",
                 NotificationManager.IMPORTANCE_MIN
             ).apply {
-                description = "Required by Android while the app waits for incoming calls. Kept silent and hidden."
+                description = "Keeps the app ready for incoming calls"
                 setSound(null, null)
-                enableVibration(false)
                 setShowBadge(false)
+                enableVibration(false)
                 lockscreenVisibility = Notification.VISIBILITY_SECRET
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            // Old LOW-importance standby channel; a channel's importance cannot be lowered in place
-            manager.deleteNotificationChannel(LEGACY_CHANNEL_STANDBY_ID)
             manager.createNotificationChannel(channel)
             manager.createNotificationChannel(standbyChannel)
+            // A channel's importance cannot be lowered once created: drop the old (Low) one
+            manager.deleteNotificationChannel(OLD_CHANNEL_STANDBY_ID)
         }
     }
 
@@ -441,10 +432,10 @@ class SipForegroundService : Service() {
     companion object {
         private const val TAG = "SipForegroundService"
         const val CHANNEL_ID = "softphone_active_call_channel"
-        const val CHANNEL_STANDBY_ID = "softphone_standby_min_channel"
-        private const val LEGACY_CHANNEL_STANDBY_ID = "softphone_standby_channel"
+        const val CHANNEL_STANDBY_ID = "softphone_standby_min"
+        private const val OLD_CHANNEL_STANDBY_ID = "softphone_standby_channel"
+        private const val STANDBY_TITLE = "PBX Pro Lab"
         const val NOTIFICATION_ID = 2001
-        const val CALL_NOTIFICATION_ID = 2002
 
         const val ACTION_START_SERVICE = "com.example.softphone.START_CALL_SERVICE"
         const val ACTION_START_STANDBY = "com.example.softphone.START_STANDBY_SERVICE"
