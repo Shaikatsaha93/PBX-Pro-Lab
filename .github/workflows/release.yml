@@ -34,10 +34,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Must grow with every release: Android only installs a higher versionCode over the old app
+      # Must grow with every release: Android only installs a higher versionCode over the old app (starts at 1000 so it is above the old Dialer app builds)
       - name: Version
         run: |
-          echo "VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
           echo "VERSION_NAME=1.0.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
 
       - uses: actions/setup-java@v4
