@@ -1,0 +1,152 @@
+# Builds a signed APK on every push to main and publishes it as the latest GitHub release.
+# The app (AppUpdater) reads update.json from the latest release and offers the new version
+# to every user. The desktop job then adds the Windows installer and desktop-update.json,
+# which the Windows app (DesktopUpdater) reads the same way. Repository secrets it needs (Settings > Secrets and variables > Actions):
+#   SIGNING_KEYSTORE_BASE64     base64 of the keystore every earlier APK was signed with
+#   SIGNING_STORE_PASSWORD      keystore password
+#   SIGNING_KEY_ALIAS           key alias in the keystore
+#   SIGNING_KEY_PASSWORD        key password
+#   GOOGLE_SERVICES_JSON_BASE64 base64 of app/google-services.json (Firebase)
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "shared/**"
+      - "desktopApp/**"
+      - "gradle/**"
+      - "*.gradle.kts"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Must grow with every release: Android only installs a higher versionCode over the old app
+      - name: Version
+        run: |
+          echo "VERSION_CODE=$((100 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=1.0.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Signing key and Firebase config
+        env:
+          KEYSTORE_B64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          GOOGLE_SERVICES_B64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$GOOGLE_SERVICES_B64" ]; then
+            echo "::error::Add the SIGNING_* and GOOGLE_SERVICES_JSON_BASE64 repository secrets first"
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "$GOOGLE_SERVICES_B64" | base64 -d > app/google-services.json
+          echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+
+      # One APK per phone CPU type (about 13 MB each) plus a universal one (about 22 MB)
+      - name: Build APK
+        env:
+          STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease -PabiSplits --no-daemon
+          OUT=app/build/outputs/apk/release
+          cp "$OUT/app-universal-release.apk" Dialer.apk
+          cp "$OUT/app-arm64-v8a-release.apk" Dialer-arm64-v8a.apk
+          cp "$OUT/app-armeabi-v7a-release.apk" Dialer-armeabi-v7a.apk
+
+      - name: update.json
+        run: |
+          # First lines of the latest commit message (also for runs started by hand)
+          NOTES="$(git log -1 --format=%B | head -n 5)"
+          echo "NOTES<<EOF" >> "$GITHUB_ENV"; echo "$NOTES" >> "$GITHUB_ENV"; echo "EOF" >> "$GITHUB_ENV"
+          BASE="https://github.com/${{ github.repository }}/releases/download/v$VERSION_NAME"
+          # apkUrl: universal APK (apps before 1.0.5 read only this); apks: one per CPU type
+          jq -n \
+            --argjson code "$VERSION_CODE" \
+            --arg name "$VERSION_NAME" \
+            --arg base "$BASE" \
+            --arg notes "$NOTES" \
+            '{versionCode: $code, versionName: $name, apkUrl: ($base + "/Dialer.apk"),
+              apks: {"arm64-v8a": ($base + "/Dialer-arm64-v8a.apk"), "armeabi-v7a": ($base + "/Dialer-armeabi-v7a.apk")},
+              notes: $notes}' > update.json
+          cat update.json
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION_NAME }}
+          name: Dialer ${{ env.VERSION_NAME }}
+          body: ${{ env.NOTES }}
+          make_latest: true
+          files: |
+            Dialer.apk
+            Dialer-arm64-v8a.apk
+            Dialer-armeabi-v7a.apk
+            update.json
+
+  # Windows installer for the same version, added to the release made above
+  desktop:
+    needs: release
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        run: echo "VERSION_NAME=1.0.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The Linphone SDK for Windows (about 300 MB) is downloaded once, then kept here
+      - uses: actions/cache@v4
+        with:
+          path: desktopApp/build/linphone
+          key: linphone-sdk-win64-${{ hashFiles('desktopApp/build.gradle.kts') }}
+
+      - name: Build installer
+        run: |
+          ./gradlew :desktopApp:packageExe --no-daemon
+          cp desktopApp/build/compose/binaries/main/exe/Dialer-*.exe Dialer-Windows-Setup.exe
+
+      - name: desktop-update.json
+        run: |
+          NOTES="$(git log -1 --format=%B | head -n 5)"
+          URL="https://github.com/${{ github.repository }}/releases/download/v$VERSION_NAME/Dialer-Windows-Setup.exe"
+          jq -n --arg v "$VERSION_NAME" --arg url "$URL" --arg notes "$NOTES"             '{version: $v, installerUrl: $url, notes: $notes}' > desktop-update.json
+          cat desktop-update.json
+
+      - name: Add to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION_NAME }}
+          make_latest: true
+          files: |
+            Dialer-Windows-Setup.exe
+            desktop-update.json

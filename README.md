@@ -1,11 +1,17 @@
 # PBX Pro Lab
 
-A native Android SIP/VoIP softphone for call-center agents, built with Kotlin, Jetpack Compose and the [Linphone SDK](https://www.linphone.org/).
+A SIP/VoIP softphone for call-center agents that runs on **Android** and **Windows**, built with Kotlin, Compose Multiplatform and the [Linphone SDK](https://www.linphone.org/). Both apps share one code base for the screens, models, database and chat; iOS and web can be added on the same base later (see [Platforms](#platforms)).
 
 It registers to a SIP server (tested with **iTelSwitchPlus 8.0.0**), places and receives calls, runs 3-way conference calls on the device, and shows the account's prepaid balance on the home screen.
 
+There is no sign-up or admin approval: install the app, add your SIP account and call.
+
 ## Features
 
+- **Windows app:** the same screens and features on a PC, with an installer. It keeps running in the system tray so calls still ring. See [Windows app](#windows-app).
+- **Chat:** 1-to-1 and group text chat between SIP users over SIP MESSAGE (for example through Asterisk).
+- **Call recording:** switch on in Settings to record every call to a WAV file on the device (Android: the app folder; Windows: Documents\Dialer\Recordings), with play, share/show and delete.
+- **Edit SIP accounts:** change a saved account from Settings; it re-registers with the new details.
 - **SIP calling:** register over UDP, TCP or TLS, make and receive calls, DTMF keypad, mute, speaker/earpiece, hold.
 - **3-way conference:** add a second party during a call. The call is mixed on the phone by Linphone's local conference. You can remove participants or leave and rejoin the conference.
 - **Account balance:** reads the prepaid balance that iTelSwitchPlus sends on every registration and shows it on the dialer status card, next to the SIP number. The currency (e.g. BDT) comes from the server; other SIP servers send no balance, so none is shown. It refreshes about once a minute and after every call, and turns red below 5.
@@ -17,7 +23,13 @@ It registers to a SIP server (tested with **iTelSwitchPlus 8.0.0**), places and 
 - **Firebase Cloud Messaging:** a call push wakes the app and re-registers the SIP account so the real call can ring. Only real FCM tokens are shown. See [Push notifications (FCM)](#push-notifications-fcm).
 - **Small APK:** the release build is about 32 MB (it was 150 MB). See [APK size](#apk-size).
 - **Other:** optional auto-answer, wake lock and Wi-Fi lock during calls.
-- **PBX Pro Lab design:** violet-and-teal brand palette, tinted panels on a dotted "lab grid" backdrop, rounded-square keypad tiles, a gradient call button and a floating tab bar. Works in light and dark mode.
+- **Audio codec choice:** pick which codecs calls may use in Settings → Audio Codecs. The default is G.711 (PCMU + PCMA), which iTelSwitchPlus likes best. The call screen shows the codec in use and the SIP log shows what was offered.
+- **Bluetooth headsets:** call audio follows a connected Bluetooth or wired headset (Android 12+ needs the *Nearby devices* permission, asked on first start), also when the headset connects in the middle of a call.
+- **Dialer shortcuts:** recent calls and matches while you type, one-tap redial, paste a copied number, long-press 0 for `+`, and `+880` numbers are dialled in local form.
+- **Grouped lists:** call history is grouped by day (tap a row's bin to delete one call, with a confirmation) and contacts are grouped A-Z.
+- **Clear call failures:** when a call fails the call screen says why (for example "Number not found (404)") and then returns to the dialer.
+- **Self-update:** Android and Windows look for a newer release on GitHub and offer to install it. See [Automatic updates](#automatic-updates).
+- **PBX Pro Lab design:** violet-and-teal brand palette, tinted glass panels on a dotted "lab grid" backdrop, rounded-square keypad tiles, a gradient call button and a floating tab bar. Works in light and dark mode.
 - **Settings:** echo cancellation, adaptive rate control, mic gain, STUN, IPv6, keep-alive, theme (System, Light or Dark).
 - **Diagnostics:** in-app SIP log viewer. SDK logs are also mirrored to logcat under the `LinphoneSdk` tag.
 
@@ -25,10 +37,10 @@ It registers to a SIP server (tested with **iTelSwitchPlus 8.0.0**), places and 
 
 | | |
 |---|---|
-| Language | Kotlin 2.2 |
-| UI | Jetpack Compose, Material 3, Navigation Compose |
-| SIP / media | Linphone SDK for Android 5.2 (`org.linphone:linphone-sdk-android:5.2.+`) |
-| Storage | Room |
+| Language | Kotlin 2.2, Kotlin Multiplatform |
+| UI | Compose Multiplatform 1.9 (Jetpack Compose on Android), Material 3, Navigation Compose |
+| SIP / media | Android: Linphone SDK 5.2 (`org.linphone:linphone-sdk-android:5.2.+`). Windows: liblinphone 5.5 (C API through JNA) |
+| Storage | Room (KMP; bundled SQLite on Windows) |
 | Push | Firebase Cloud Messaging |
 | Build | Android Gradle Plugin 9.1, Gradle 9.3.1 |
 | Android | minSdk 24, targetSdk / compileSdk 36 |
@@ -36,48 +48,86 @@ It registers to a SIP server (tested with **iTelSwitchPlus 8.0.0**), places and 
 ## Project structure
 
 ```
-app/src/main/java/com/example/
-├── sip/            SipManager: Linphone core, registration, calls, conference, balance
-├── telecom/        ConnectionService and PhoneAccount registration
-├── service/        Standby/call foreground service, FCM service, boot receiver,
-│                   battery and full-screen permission checks
-├── data/
-│   ├── model/      CallState, SipAccount, AccountBalance, AppSettings, …
-│   ├── local/      Room database and DAOs
-│   └── repository/ Accounts, call log, contacts, settings, FCM token
-└── ui/
-    ├── screens/    Dialer, Active call, Contacts, History, Account settings
-    ├── components/ Keypad, cards, settings sections
-    ├── theme/      Colors, typography, glass style (Glass.kt)
-    └── viewmodel/  SoftphoneViewModel
+shared/            Code shared by all platforms (Kotlin Multiplatform)
+  src/commonMain/kotlin/com/example/
+  ├── AppGraph.kt       The services each app hands to the shared screens
+  ├── platform/         Small helpers (time, dates, URL encoding) without JVM APIs
+  ├── sip/              SipManager interface, CallEvent, chat headers
+  ├── data/
+  │   ├── model/        CallState, SipAccount, AccountBalance, AppSettings, Chat, …
+  │   ├── local/        Room database and DAOs
+  │   └── repository/   Accounts, call log, settings, chat, and the platform service
+  │                     interfaces (ContactsSource, PushSource, …)
+  └── ui/               Every screen, component, theme and SoftphoneViewModel
+  src/androidMain/      Android-only UI: permissions, recordings card, battery card, FCM card
+  src/desktopMain/      Windows-only UI: recordings card, toast
+  src/jvmShared/        JVM helpers used by Android and Windows
+
+app/               Android app
+  src/main/java/com/example/
+  ├── sip/              LinphoneSipManager (Linphone SDK for Android)
+  ├── telecom/          ConnectionService and PhoneAccount registration
+  ├── service/          Standby/call foreground service, FCM, boot receiver, notifications
+  └── data/repository/  contacts, FCM token
+
+desktopApp/        Windows app
+  src/main/kotlin/com/example/desktop/
+  ├── Main.kt           Window, tray
+  ├── sip/              DesktopSipManager + LinphoneNative (liblinphone through JNA)
 ```
 
-Almost all call logic is in [`SipManager.kt`](app/src/main/java/com/example/sip/SipManager.kt).
+The Android call logic is in [`LinphoneSipManager.kt`](app/src/main/java/com/example/sip/LinphoneSipManager.kt), the Windows one in [`DesktopSipManager.kt`](desktopApp/src/main/kotlin/com/example/desktop/sip/DesktopSipManager.kt). The Firestore security rules are in [`firestore.rules`](firestore.rules).
+
+## Platforms
+
+| Platform | Status | SIP engine |
+|---|---|---|
+| Android | Done | Linphone SDK for Android |
+| Windows | Done | liblinphone for Windows (JNA) |
+| iOS | Not started | Would use Linphone for iOS, CallKit and PushKit. Needs a Mac and an Apple Developer account to build. iOS does not keep a SIP registration in the background, so the server must send VoIP pushes. |
+| Web | Not started | Browsers cannot send UDP SIP, so it would use SIP.js over WebRTC. Needs SIP over WebSocket (WSS) on the server or a gateway such as Asterisk. |
+
+Adding a platform means adding a target to `shared` and implementing the interfaces in `AppGraph` (SIP, contacts, push) for it; the screens are reused as they are.
+
+## Windows app
+
+### Install
+
+Run the installer (per-user install, no admin rights needed). It adds a Start menu entry and a desktop shortcut. Add your SIP account in Settings and you are ready. Codec choice is Android-only for now; Windows uses liblinphone's defaults.
+
+- Closing the window keeps Dialer in the **system tray** so the account stays registered and calls ring. Use **Quit** in the tray menu to exit.
+- An incoming call brings the window to the front and shows a Windows notification.
+- Audio uses the default Windows microphone and speakers/headset (change them in Windows sound settings).
+- Data is stored in `%APPDATA%\Dialer` (database, Linphone state) and the Windows registry (settings). Recordings go to `Documents\Dialer\Recordings`.
+- No phone contacts on Windows; dial numbers directly.
+
+### Build
+
+```bash
+./gradlew :desktopApp:run            # run from source
+./gradlew :desktopApp:packageExe     # installer in desktopApp/build/compose/binaries/main/exe/
+./gradlew :desktopApp:packageMsi     # MSI instead
+```
+
+The first build runs `fetchLinphoneWindows`, which downloads the official Linphone SDK for Windows (about 300 MB, once) and copies the needed DLLs, audio plugins, SIP grammars and sounds (about 57 MB) into `desktopApp/linphone/` (not committed). Building the installer needs Windows; the WiX tools are downloaded automatically.
 
 ## Design
 
-The UI uses a frosted-glass style similar to iOS "Liquid Glass", with Apple's iOS system colors.
+PBX Pro Lab uses a violet-and-teal "lab" look on top of frosted-glass panels.
 
-- **Backdrop:** a soft gradient with faint system-blue glows, drawn behind every screen by `GlassBackground`.
-- **Glass panels:** the `Modifier.glass(shape, colors)` extension draws a translucent fill, a light sheen at the top and a bright hairline edge. Keypad keys, the account status card, the number field, call controls and list cards use it. Active buttons, such as Mute when it is on, are filled with their own color.
-- **Floating tab bar:** the bottom navigation is a rounded glass bar that floats above the screen edge.
-- **System bars:** status and navigation bar icons follow the app theme, so they stay readable in dark mode.
+- **Brand:** a violet-to-teal gradient (`BrandGradient`) on the logo tile and the Call button; teal for secondary accents, violet for the primary color.
+- **Backdrop:** a soft tinted gradient with a faint dotted grid, drawn behind every screen by `GlassBackground`.
+- **Glass panels:** `Modifier.glass(shape, colors)` draws a translucent fill, a light sheen and a hairline edge. The account status card, call controls and list cards use it.
+- **Keypad:** rounded-square tiles that shrink slightly when pressed; the letters under each digit use the brand color.
+- **Floating tab bar:** Keypad, Contacts, Chat, History and Settings in a rounded glass bar above the screen edge.
+- **Theme button:** one button on the dialer cycles System, Light and Dark; the full picker is in Settings.
 
-| | Light | Dark |
-|---|---|---|
-| Accent (buttons, selected tab, links) | `#007AFF` | `#0A84FF` |
-| Background | `#F2F2F7` | `#000000` |
-| Call button | `#34C759` | `#34C759` |
-| Hang up button | `#FF3B30` | `#FF3B30` |
-| Primary text | `#1C1C1E` | `#F2F2F7` |
-| Secondary text | `#6C6C70` | `#98989F` |
+To change the look, edit:
 
-To change the look, edit two files:
+- [`ui/theme/Color.kt`](shared/src/commonMain/kotlin/com/example/ui/theme/Color.kt): brand, accent, text and call-button colors.
+- [`ui/theme/Glass.kt`](shared/src/commonMain/kotlin/com/example/ui/theme/Glass.kt): glass transparency, edge brightness, the backdrop and `BrandGradient`.
 
-- [`ui/theme/Color.kt`](app/src/main/java/com/example/ui/theme/Color.kt): accent, text and call-button colors.
-- [`ui/theme/Glass.kt`](app/src/main/java/com/example/ui/theme/Glass.kt): glass transparency, edge brightness, and the backdrop gradient and glow colors (`LightGlassColors`, `DarkGlassColors`).
-
-The glass panels are translucent but do not blur the content behind them. The backdrop is already soft, so they read as frosted glass and run smoothly on Android 7 and newer. Real backdrop blur would need a library such as Haze and works only on Android 12 and newer.
+The glass panels are translucent but do not blur the content behind them, so they run smoothly on Android 7 and newer.
 
 ## Build and run
 
@@ -97,7 +147,7 @@ The glass panels are translucent but do not blur the content behind them. The ba
 3. Put your `google-services.json` in `app/`.
 4. Run the `app` configuration on a device or emulator.
 
-The Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle-wrapper.jar`) is included, so you can also build from the command line:
+Build from the command line with the Gradle wrapper:
 
 ```bash
 ./gradlew :app:assembleDebug        # build the APK
@@ -107,9 +157,32 @@ The Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle-wrapper.jar`) is included,
 ### Signing
 
 - **Debug** builds use `debug.keystore` in the project root. It is not committed; add your own.
-- **Release** builds read the keystore from the `KEYSTORE_PATH` environment variable (default `my-upload-key.jks` in the project root), with `STORE_PASSWORD` and `KEY_PASSWORD` for the passwords.
+- **Release** builds read the keystore from the `KEYSTORE_PATH` environment variable (default `my-upload-key.jks` in the project root), with `STORE_PASSWORD`, `KEY_ALIAS` (default `upload`) and `KEY_PASSWORD`.
+- `VERSION_CODE` and `VERSION_NAME` set the app version (default `1` / `1.0`). The release workflow sets them.
 
 If a device already has the app signed with a different key, Android refuses the update. Uninstall the old app first; this deletes its saved accounts and history.
+
+### Automatic updates
+
+Every push to `main` that changes the app (`app/`, `shared/`, `desktopApp/`, Gradle files) runs the **Release** workflow (`.github/workflows/release.yml`). It builds a signed APK and publishes it as the newest [GitHub release](https://github.com/Shaikatsaha93/PBX-Pro-Lab/releases), together with `update.json`. A second job then builds the Windows installer (`Dialer-Windows-Setup.exe`) for the same version on a Windows runner and adds it to that release with `desktop-update.json`. The workflow can also be started by hand from the **Actions** tab (**Run workflow**).
+
+When the Android app is opened (at most once an hour) it reads `update.json` from the latest release. If that version is newer, it shows **Update available**. **Update** downloads the APK and opens Android's install screen; accounts and history are kept. The first time, Android asks to allow installs from this app.
+
+The Windows app checks `desktop-update.json` 10 seconds after it starts and then every 6 hours (it usually keeps running in the tray). A newer version shows a Windows notification and an **Update available** dialog (not during a call). **Update** downloads the installer, starts it and closes Dialer; the installer upgrades the existing install, so accounts, settings and history are kept. Open Dialer again when it finishes. **Settings → Check for updates** checks right away. Installs older than the first release with this feature (version 1.0.0) have no updater and need the new installer once by hand.
+
+The workflow needs these repository secrets (**Settings → Secrets and variables → Actions**):
+
+| Secret | Value |
+|---|---|
+| `SIGNING_KEYSTORE_BASE64` | The keystore the installed APKs were signed with, base64-encoded |
+| `SIGNING_STORE_PASSWORD` | Keystore password |
+| `SIGNING_KEY_ALIAS` | Key alias |
+| `SIGNING_KEY_PASSWORD` | Key password |
+| `GOOGLE_SERVICES_JSON_BASE64` | `app/google-services.json`, base64-encoded |
+
+The repository must be public: the app downloads updates without a GitHub login. Every release must be signed with the same keystore, or Android refuses the update.
+
+Work that is not ready for users goes on another branch. Merge it into `main` when it should ship.
 
 ## Configure a SIP account
 
@@ -133,10 +206,6 @@ When registration succeeds, the dialer shows **SIP Online • Ready to Call** an
 4. Tap the end-call button to hang up everyone.
 
 A is not put on SIP hold while B rings; see the server notes below for why.
-
-## Installing without a cable
-
-Build the release APK (see [Signing](#signing)) and send the file to the phone as a **document** through WhatsApp, Telegram *Saved Messages* or Google Drive. Open it on the phone, allow *Install unknown apps* for that app, and choose **Install anyway** if Play Protect warns. Install it over the old app as an update.
 
 ## Receiving calls in the background
 
@@ -231,5 +300,5 @@ These behaviours were found in SIP traces and shaped the implementation:
   adb logcat -s LinphoneSipManager LinphoneSdk
   ```
   During a conference, `[Conf Stats]` lines appear every 2 seconds with each leg's codec, direction and bandwidth. `in=0.0kbps` on a leg means that party's audio is not reaching the phone.
-- **Calls are missed when the phone is locked.** Open **Settings → Background & Lock Screen** and make sure both items show a green tick. Check that the app is running (the *Background standby* notification can be hidden). On Xiaomi, Oppo, Vivo, Realme and Samsung phones also allow Autostart.
+- **Calls are missed when the phone is locked.** Open **Settings → Background & Lock Screen** and make sure both items show a green tick. Check that the *SIP Softphone Standby* notification is present. On Xiaomi, Oppo, Vivo, Realme and Samsung phones also allow Autostart.
 - **Registration fails.** The Settings screen shows the SIP error code: 401/407 for wrong credentials, 403 for a forbidden or blocked account, 404 for an unknown user, 408 for an unreachable server.

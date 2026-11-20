@@ -2,21 +2,29 @@ package com.example
 
 import android.app.Application
 import android.util.Log
+import com.example.data.local.AndroidDatabase
 import com.example.data.local.AppDatabase
+import com.example.data.local.SharedPrefsStore
+import com.example.data.model.CallState
 import com.example.data.model.CallType
 import com.example.data.repository.CallLogRepository
+import com.example.data.repository.ChatRepository
 import com.example.data.repository.FcmTokenManager
 import com.example.data.repository.SettingsRepository
 import com.example.data.repository.SipAccountRepository
+import com.example.service.AndroidChatNotifier
 import com.example.service.SipForegroundService
 import com.example.sip.CallEvent
 import com.example.sip.LinphoneSipManager
 import com.example.sip.SipManager
+import kotlinx.coroutines.flow.distinctUntilChanged
+import com.example.telecom.SoftphoneConnection
 import com.example.telecom.TelecomHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -36,19 +44,22 @@ class SoftphoneApp : Application() {
         private set
     lateinit var telecomHelper: TelecomHelper
         private set
+    val appUpdater by lazy { com.example.update.AppUpdater(this) }
     lateinit var fcmTokenManager: FcmTokenManager
         private set
     lateinit var contactsRepository: com.example.data.repository.ContactsRepository
+        private set
+    lateinit var chatRepository: ChatRepository
         private set
 
     override fun onCreate() {
         super.onCreate()
         instance = this
 
-        database = AppDatabase.getInstance(this)
+        database = AndroidDatabase.getInstance(this)
         accountRepository = SipAccountRepository(database.sipAccountDao())
         callLogRepository = CallLogRepository(database.callLogDao())
-        settingsRepository = SettingsRepository(this)
+        settingsRepository = SettingsRepository(SharedPrefsStore(this, "app_voip_settings"))
         fcmTokenManager = FcmTokenManager(this)
         contactsRepository = com.example.data.repository.ContactsRepository(this)
         sipManager = LinphoneSipManager(this)
@@ -57,6 +68,29 @@ class SoftphoneApp : Application() {
         telecomHelper.registerPhoneAccount()
         sipManager.initializeSdk()
         fcmTokenManager.initialize()
+        chatRepository = ChatRepository(database.chatDao(), sipManager, contactsRepository, AndroidChatNotifier(this), applicationScope)
+        chatRepository.start()
+
+        // Hand the services to the shared screens
+        AppGraph.sipManager = sipManager
+        AppGraph.accountRepository = accountRepository
+        AppGraph.callLogRepository = callLogRepository
+        AppGraph.settingsRepository = settingsRepository
+        AppGraph.contacts = contactsRepository
+        AppGraph.push = fcmTokenManager
+        AppGraph.chatRepository = chatRepository
+        AppGraph.appVersion = BuildConfig.VERSION_NAME
+        AppGraph.checkForUpdates = {
+            applicationScope.launch(Dispatchers.Main) {
+                val reached = appUpdater.check(force = true)
+                val message = when {
+                    !reached -> "Could not check for updates (${appUpdater.lastError}). Check the internet connection."
+                    appUpdater.state.value is com.example.update.UpdateState.None -> "You have the latest version (${BuildConfig.VERSION_NAME})"
+                    else -> null // the update dialog opens
+                }
+                if (message != null) android.widget.Toast.makeText(this@SoftphoneApp, message, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
         if (contactsRepository.hasContactsPermission()) {
             applicationScope.launch {
                 contactsRepository.loadContacts()
@@ -65,6 +99,18 @@ class SoftphoneApp : Application() {
 
         observeActiveAccount()
         observeCallEvents()
+        observeTelecomState()
+    }
+
+    /** Keeps Android Telecom's copy of the call in step with the SIP call (see SoftphoneConnection). */
+    private fun observeTelecomState() {
+        applicationScope.launch(Dispatchers.Main) {
+            sipManager.callState.collect { state ->
+                if (state is CallState.Connected) {
+                    if (state.isOnHold) SoftphoneConnection.onCallHeld(true) else SoftphoneConnection.onCallActive()
+                }
+            }
+        }
     }
 
     private fun observeActiveAccount() {
@@ -91,11 +137,12 @@ class SoftphoneApp : Application() {
                 when (event) {
                     is CallEvent.CallStarted -> {
                         startServiceSafely { SipForegroundService.startService(this@SoftphoneApp) }
-                        if (event.isIncoming) {
+                        if (event.isIncoming && settingsRepository.settings.value.androidCallIntegration) {
                             telecomHelper.reportIncomingCall(event.remoteUri, event.displayName)
                         }
                     }
                     is CallEvent.CallEnded -> {
+                        SoftphoneConnection.onCallEnded(event.wasMissed)
                         SipForegroundService.stopService(this@SoftphoneApp)
                         if (settingsRepository.settings.value.recordCallHistory) {
                             val callType = when {

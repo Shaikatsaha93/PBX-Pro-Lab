@@ -25,7 +25,9 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "PBX Pro Lab"
+rootProject.name = "Dialer"
 
 include(":app")
+include(":shared")
+include(":desktopApp")
 

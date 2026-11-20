@@ -1,0 +1,882 @@
+package com.example.ui.screens
+
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.BrightnessAuto
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import com.example.ui.theme.BrandGradient
+import com.example.ui.theme.BrandGradientEnd
+import com.example.ui.theme.CallActionAmber
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Backspace
+import androidx.compose.material.icons.automirrored.filled.CallMade
+import androidx.compose.material.icons.automirrored.filled.CallMissed
+import androidx.compose.material.icons.automirrored.filled.CallReceived
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Dialpad
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PhoneInTalk
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Card
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.theme.LocalGlassColors
+import com.example.ui.theme.glass
+import com.example.data.model.AccountBalance
+import com.example.data.model.AppThemeMode
+import com.example.data.model.CallType
+import com.example.data.model.CallState
+import com.example.data.model.RegistrationStatus
+import com.example.data.model.SipAccount
+import com.example.platform.relativeTime
+import com.example.ui.components.DtmfKeypad
+import com.example.ui.theme.CallActionGreen
+import com.example.ui.theme.CallActionRed
+import com.example.ui.viewmodel.DialSuggestion
+import com.example.ui.viewmodel.SoftphoneViewModel
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun DialerScreen(
+    viewModel: SoftphoneViewModel,
+    onNavigateToActiveCall: () -> Unit,
+    onNavigateToAccounts: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val dialerInput by viewModel.dialerInput.collectAsStateWithLifecycle()
+    val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
+    val registrationState by viewModel.registrationState.collectAsStateWithLifecycle()
+    val accountBalance by viewModel.accountBalance.collectAsStateWithLifecycle()
+    val callState by viewModel.callState.collectAsStateWithLifecycle()
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val settings by viewModel.settings.collectAsStateWithLifecycle()
+    val suggestions by viewModel.dialSuggestions.collectAsStateWithLifecycle()
+    val lastDialed by viewModel.lastDialedNumber.collectAsStateWithLifecycle()
+    val clipboard = LocalClipboardManager.current
+
+    fun call(number: String) {
+        if (viewModel.initiateCall(number)) onNavigateToActiveCall()
+    }
+    val onCall: () -> Unit = {
+        val redial = lastDialed
+        when {
+            // At least one digit: "+" or "*" alone is not a number (the switch answers Forbidden)
+            dialerInput.any { it.isDigit() } -> call(dialerInput)
+            dialerInput.isNotEmpty() -> Unit
+            // Empty pad: the first tap fills in the last dialed number, like a desk phone's redial
+            redial != null -> viewModel.setDialerInput(redial)
+        }
+    }
+    // Copied numbers often carry spaces or dashes (017-1234 5678): keep what can be dialed
+    val onPaste: () -> Unit = {
+        val text = clipboard.getText()?.text.orEmpty()
+        val number = text.filter { it.isDigit() || it in "+*#" }
+        if (number.isNotEmpty()) viewModel.setDialerInput(number)
+    }
+    // Long-press 0 types "+" (international numbers)
+    val onKeyLongPressed: (Char) -> Boolean = { key ->
+        if (key == '0') {
+            viewModel.setDialerInput(dialerInput + "+")
+            true
+        } else {
+            false
+        }
+    }
+
+    val isCallActive = callState !is CallState.Idle && callState !is CallState.Disconnected
+    var keypadOpen by rememberSaveable { mutableStateOf(true) }
+    val matchedContactName = if (dialerInput.isNotBlank()) viewModel.getContactNameForUri(dialerInput) else null
+
+    val infiniteTransition = rememberInfiniteTransition(label = "PulseAnimation")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "PulseScale"
+    )
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val isWideLayout = maxWidth >= 600.dp
+        val screenHeight = maxHeight
+        val isCompactHeight = screenHeight < 680.dp
+
+        if (isWideLayout) {
+            // Foldables & Tablets Responsive Layout
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Left Column: Branding, Account Status, Display & Call Actions
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    DialerTopBar(
+                        themeMode = themeMode,
+                        onThemeSelect = { viewModel.setThemeMode(it) }
+                    )
+
+                    AccountStatusBar(
+                        activeAccount = activeAccount,
+                        registrationState = registrationState,
+                        accountBalance = accountBalance,
+                        pulseScale = pulseScale,
+                        onClick = onNavigateToAccounts
+                    )
+
+                    OngoingCallBanner(
+                        isCallActive = isCallActive,
+                        onClick = onNavigateToActiveCall
+                    )
+
+                    NumberDisplayField(
+                        dialerInput = dialerInput,
+                        matchedContactName = matchedContactName,
+                        isCompactHeight = false
+                    )
+
+                    RecentCallsList(
+                        suggestions = suggestions,
+                        typing = dialerInput.isNotEmpty(),
+                        listState = rememberLazyListState(),
+                        onPick = { viewModel.setDialerInput(it.number) },
+                        onCall = { call(it.number) },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    CallActionsRow(
+                        dialerInput = dialerInput,
+                        activeAccount = activeAccount,
+                        isCompactHeight = false,
+                        onPaste = onPaste,
+                        onCall = onCall,
+                        onBackspace = { viewModel.onBackspace() },
+                        onClearAll = { viewModel.setDialerInput("") }
+                    )
+                }
+
+                // Right Column: Centered Keypad
+                Column(
+                    modifier = Modifier
+                        .weight(1.1f)
+                        .fillMaxHeight(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            DtmfKeypad(
+                                onKeyPressed = { char -> viewModel.onDialerChar(char) },
+                                hapticFeedbackEnabled = settings.dtmfHapticFeedback,
+                                modifier = Modifier.fillMaxWidth(),
+                                keySize = 72.dp,
+                                spacing = 14.dp,
+                                onKeyLongPressed = onKeyLongPressed
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            // Standard Phones and Foldable Cover Screens
+            val keypadKeySize = when {
+                isCompactHeight -> 58.dp
+                screenHeight > 780.dp -> 74.dp
+                else -> 68.dp
+            }
+            val keypadSpacing = if (isCompactHeight) 8.dp else 12.dp
+            val verticalPadding = if (isCompactHeight) 6.dp else 12.dp
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 18.dp, vertical = verticalPadding),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                DialerTopBar(
+                    themeMode = themeMode,
+                    onThemeSelect = { viewModel.setThemeMode(it) }
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                AccountStatusBar(
+                    activeAccount = activeAccount,
+                    registrationState = registrationState,
+                    accountBalance = accountBalance,
+                    pulseScale = pulseScale,
+                    onClick = onNavigateToAccounts
+                )
+
+                OngoingCallBanner(
+                    isCallActive = isCallActive,
+                    onClick = onNavigateToActiveCall
+                )
+
+                // Recent calls fill the screen like a phone's own dialer. Scrolling the list puts
+                // the dial pad away; the dial pad button brings it back.
+                val listState = rememberLazyListState()
+                LaunchedEffect(listState) {
+                    snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
+                        if (scrolling) keypadOpen = false
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                ) {
+                    RecentCallsList(
+                        suggestions = suggestions,
+                        typing = dialerInput.isNotEmpty(),
+                        listState = listState,
+                        onPick = {
+                            viewModel.setDialerInput(it.number)
+                            keypadOpen = true
+                        },
+                        onCall = { call(it.number) },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    if (!keypadOpen) {
+                        FloatingActionButton(
+                            onClick = { keypadOpen = true },
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(bottom = 8.dp, end = 4.dp)
+                                .size(60.dp)
+                                .testTag("dialer_show_keypad")
+                        ) {
+                            Icon(Icons.Default.Dialpad, contentDescription = "Show dial pad", modifier = Modifier.size(28.dp))
+                        }
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = keypadOpen,
+                    enter = expandVertically(expandFrom = Alignment.Top),
+                    exit = shrinkVertically(shrinkTowards = Alignment.Top)
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        // Handle: tap to put the dial pad away and see the whole list
+                        Surface(
+                            onClick = { keypadOpen = false },
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.Transparent,
+                            modifier = Modifier.testTag("dialer_hide_keypad")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Hide dial pad",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .padding(horizontal = 24.dp, vertical = 2.dp)
+                                    .size(26.dp)
+                            )
+                        }
+
+                        NumberDisplayField(
+                            dialerInput = dialerInput,
+                            matchedContactName = matchedContactName,
+                            isCompactHeight = isCompactHeight
+                        )
+
+                        Spacer(modifier = Modifier.height(if (isCompactHeight) 8.dp else 12.dp))
+
+                        DtmfKeypad(
+                            onKeyPressed = { char -> viewModel.onDialerChar(char) },
+                            hapticFeedbackEnabled = settings.dtmfHapticFeedback,
+                            modifier = Modifier.fillMaxWidth(),
+                            keySize = keypadKeySize,
+                            spacing = keypadSpacing,
+                            onKeyLongPressed = onKeyLongPressed
+                        )
+
+                        Spacer(modifier = Modifier.height(if (isCompactHeight) 10.dp else 14.dp))
+
+                        CallActionsRow(
+                            dialerInput = dialerInput,
+                            activeAccount = activeAccount,
+                            isCompactHeight = isCompactHeight,
+                            onPaste = onPaste,
+                            onCall = onCall,
+                            onBackspace = { viewModel.onBackspace() },
+                            onClearAll = { viewModel.setDialerInput("") }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(if (isCompactHeight) 6.dp else 10.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DialerTopBar(
+    themeMode: AppThemeMode,
+    onThemeSelect: (AppThemeMode) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Gradient monogram tile
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(BrandGradient),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "PBX",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 0.5.sp,
+                    modifier = Modifier.semantics { contentDescription = "PBX Pro Lab logo" }
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = "PBX Pro Lab",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "SIP SOFTPHONE" +
+                        com.example.AppGraph.appVersion.takeIf { it.isNotBlank() }?.let { " · v$it" }.orEmpty(),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.8.sp,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
+        }
+
+        ThemeCycleButton(themeMode = themeMode, onThemeSelect = onThemeSelect)
+    }
+}
+
+/** One compact button that cycles System -> Light -> Dark; the full picker lives in Settings. */
+@Composable
+private fun ThemeCycleButton(
+    themeMode: AppThemeMode,
+    onThemeSelect: (AppThemeMode) -> Unit
+) {
+    val (icon, next) = when (themeMode) {
+        AppThemeMode.SYSTEM -> Icons.Default.BrightnessAuto to AppThemeMode.LIGHT
+        AppThemeMode.LIGHT -> Icons.Default.LightMode to AppThemeMode.DARK
+        AppThemeMode.DARK -> Icons.Default.DarkMode to AppThemeMode.SYSTEM
+    }
+    Surface(
+        onClick = { onThemeSelect(next) },
+        shape = RoundedCornerShape(14.dp),
+        color = Color.Transparent,
+        modifier = Modifier
+            .size(44.dp)
+            .glass(RoundedCornerShape(14.dp), LocalGlassColors.current)
+            .testTag("theme_cycle_button")
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = "Theme: ${themeMode.label}. Tap to change",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccountStatusBar(
+    activeAccount: SipAccount?,
+    registrationState: RegistrationStatus,
+    accountBalance: AccountBalance?,
+    pulseScale: Float,
+    onClick: () -> Unit
+) {
+    val statusDotColor = when {
+        activeAccount == null -> CallActionAmber
+        registrationState == RegistrationStatus.REGISTERED -> CallActionGreen
+        registrationState == RegistrationStatus.REGISTERING -> CallActionAmber
+        registrationState == RegistrationStatus.FAILED -> CallActionRed
+        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp)
+            .glass(RoundedCornerShape(20.dp), LocalGlassColors.current)
+            .clickable(onClick = onClick)
+            .testTag("dialer_account_status_bar"),
+        color = Color.Transparent,
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(12.dp)
+                    .scale(if (registrationState == RegistrationStatus.REGISTERING) pulseScale else 1f)
+                    .clip(CircleShape)
+                    .background(statusDotColor)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (activeAccount != null) {
+                        // Just the number; the server address is not useful to the agent
+                        activeAccount.username.trim().removePrefix("sip:").substringBefore("@")
+                    } else {
+                        "No SIP account yet"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = when {
+                        activeAccount == null -> "Tap here to add your account"
+                        registrationState == RegistrationStatus.REGISTERED -> "Online • Ready to call"
+                        registrationState == RegistrationStatus.REGISTERING -> "Connecting…"
+                        registrationState == RegistrationStatus.FAILED -> "Can't connect • Tap to check settings"
+                        else -> "Offline • Tap to reconnect"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = statusDotColor
+                )
+            }
+
+            if (accountBalance != null && registrationState == RegistrationStatus.REGISTERED) {
+                val low = accountBalance.amount < 5.0
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .testTag("dialer_balance")
+                ) {
+                    Text(
+                        text = "Balance",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = accountBalance.formatted,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = if (low) CallActionRed else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
+            Icon(
+                imageVector = if (activeAccount == null) Icons.Default.ChevronRight else Icons.Default.Settings,
+                contentDescription = "Account settings",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun OngoingCallBanner(
+    isCallActive: Boolean,
+    onClick: () -> Unit
+) {
+    AnimatedVisibility(
+        visible = isCallActive,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp)
+                .clickable(onClick = onClick)
+                .testTag("ongoing_call_banner"),
+            colors = CardDefaults.cardColors(containerColor = CallActionGreen.copy(alpha = 0.15f)),
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, CallActionGreen.copy(alpha = 0.4f))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PhoneInTalk,
+                    contentDescription = "Active Call",
+                    tint = CallActionGreen,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Call in progress - Tap to return",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = CallActionGreen,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NumberDisplayField(
+    dialerInput: String,
+    matchedContactName: String? = null,
+    isCompactHeight: Boolean
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp)
+            .glass(RoundedCornerShape(22.dp), LocalGlassColors.current),
+        shape = RoundedCornerShape(22.dp),
+        color = Color.Transparent
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = if (isCompactHeight) 8.dp else 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = if (dialerInput.isEmpty()) "Enter number" else dialerInput,
+                fontSize = if (dialerInput.length > 15) 20.sp else if (dialerInput.length > 10) 24.sp else 28.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (dialerInput.isEmpty()) {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.testTag("dialer_display_text")
+            )
+            if (!matchedContactName.isNullOrBlank()) {
+                Text(
+                    text = "👤 $matchedContactName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CallActionsRow(
+    dialerInput: String,
+    activeAccount: SipAccount?,
+    isCompactHeight: Boolean,
+    onPaste: () -> Unit,
+    onCall: () -> Unit,
+    onBackspace: () -> Unit,
+    onClearAll: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Paste a copied number (from WhatsApp, a CRM, an SMS...)
+        Surface(
+            onClick = onPaste,
+            shape = CircleShape,
+            color = Color.Transparent,
+            modifier = Modifier
+                .size(if (isCompactHeight) 48.dp else 52.dp)
+                .glass(CircleShape, LocalGlassColors.current)
+                .testTag("dialer_paste_button")
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Default.ContentPaste,
+                    contentDescription = "Paste number",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+
+        // Gradient call pill
+        Row(
+            modifier = Modifier
+                .height(if (isCompactHeight) 60.dp else 66.dp)
+                .widthIn(min = 130.dp)
+                .shadow(10.dp, RoundedCornerShape(33.dp), spotColor = CallActionGreen)
+                .clip(RoundedCornerShape(33.dp))
+                .background(Brush.linearGradient(listOf(CallActionGreen, BrandGradientEnd)))
+                .clickable(onClick = onCall)
+                .padding(horizontal = 26.dp)
+                .testTag("dialer_call_button"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Call,
+                contentDescription = "Initiate Call",
+                tint = Color.White,
+                modifier = Modifier.size(if (isCompactHeight) 26.dp else 28.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(text = "Call", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+
+        // Backspace Button
+        Surface(
+            modifier = Modifier
+                .size(if (isCompactHeight) 48.dp else 52.dp)
+                .glass(CircleShape, LocalGlassColors.current)
+                .combinedClickable(
+                    onClick = onBackspace,
+                    onLongClick = onClearAll
+                )
+                .testTag("dialer_backspace_button"),
+            shape = CircleShape,
+            color = Color.Transparent
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Backspace,
+                    contentDescription = "Backspace (hold to clear)",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (dialerInput.isEmpty()) 0.3f else 1f),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Recent calls (nothing typed) or matches (while typing), scrollable like the phone's own call
+ * list. Tapping a row puts the number on the dial pad; the green button calls it straight away.
+ */
+@Composable
+private fun RecentCallsList(
+    suggestions: List<DialSuggestion>,
+    typing: Boolean,
+    listState: LazyListState,
+    onPick: (DialSuggestion) -> Unit,
+    onCall: (DialSuggestion) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (suggestions.isEmpty()) {
+        Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(
+                text = if (typing) "No matching numbers" else "No recent calls",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        return
+    }
+    LazyColumn(
+        state = listState,
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        item {
+            Text(
+                text = if (typing) "Matches" else "Recent",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 8.dp, top = 2.dp)
+            )
+        }
+        itemsIndexed(suggestions, key = { index, item -> "$index-${item.number}" }) { _, item ->
+            DialSuggestionRow(item, onPick = { onPick(item) }, onCall = { onCall(item) })
+        }
+        // Room so the last row is not hidden behind the dial pad button
+        item { Spacer(modifier = Modifier.height(72.dp)) }
+    }
+}
+
+@Composable
+private fun DialSuggestionRow(
+    item: DialSuggestion,
+    onPick: () -> Unit,
+    onCall: () -> Unit
+) {
+    val (icon, tint) = when (item.callType) {
+        CallType.MISSED -> Icons.AutoMirrored.Filled.CallMissed to CallActionRed
+        CallType.INCOMING -> Icons.AutoMirrored.Filled.CallReceived to MaterialTheme.colorScheme.primary
+        CallType.OUTGOING -> Icons.AutoMirrored.Filled.CallMade to CallActionGreen
+        null -> Icons.Default.Person to MaterialTheme.colorScheme.primary
+    }
+    val name = item.name.takeIf { it.isNotBlank() && !it.startsWith("sip:") && it != item.number }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glass(RoundedCornerShape(16.dp), LocalGlassColors.current)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onPick)
+            .testTag("dial_suggestion_${item.number}"),
+        shape = RoundedCornerShape(16.dp),
+        color = Color.Transparent
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = (name ?: item.number) + if (item.count > 1) "  (${item.count})" else "",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (item.callType == CallType.MISSED) CallActionRed else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val details = listOfNotNull(
+                    if (name != null) item.number else null,
+                    when (item.callType) {
+                        CallType.MISSED -> "Missed"
+                        CallType.INCOMING -> "Incoming"
+                        CallType.OUTGOING -> "Outgoing"
+                        null -> "Contact"
+                    },
+                    item.timestamp?.let { relativeTime(it) }
+                ).joinToString(" · ")
+                run {
+                    Text(
+                        text = details,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+            }
+            Surface(
+                onClick = onCall,
+                shape = CircleShape,
+                color = CallActionGreen.copy(alpha = 0.15f),
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Call,
+                        contentDescription = "Call ${item.number}",
+                        tint = CallActionGreen,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+    }
+}

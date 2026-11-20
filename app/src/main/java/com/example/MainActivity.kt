@@ -11,7 +11,13 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.lifecycleScope
+import com.example.update.UpdateDialog
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.AppThemeMode
 import com.example.data.model.CallState
@@ -25,11 +31,15 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: SoftphoneViewModel by viewModels { SoftphoneViewModel.Factory }
 
+    /** Conversation to open, when started from a chat notification. */
+    private var openChatRequest by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
         configureLockScreenFlags()
+        openChatRequest = intent?.getStringExtra(EXTRA_OPEN_CHAT)
 
         setContent {
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
@@ -71,7 +81,21 @@ class MainActivity : ComponentActivity() {
             }
 
             SoftphoneTheme(darkTheme = isDarkTheme) {
-                SoftphoneMainScreen(viewModel = viewModel)
+                // A newer version from GitHub releases (see AppUpdater)
+                val updater = SoftphoneApp.instance.appUpdater
+                val updateState by updater.state.collectAsStateWithLifecycle()
+                val updateScope = rememberCoroutineScope()
+                UpdateDialog(
+                    state = updateState,
+                    onUpdate = { update -> updateScope.launch { updater.downloadAndInstall(update) } },
+                    onLater = updater::dismiss
+                )
+
+                SoftphoneMainScreen(
+                    viewModel = viewModel,
+                    openChatRequest = openChatRequest,
+                    onChatOpened = { openChatRequest = null }
+                )
             }
         }
     }
@@ -93,6 +117,16 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        intent.getStringExtra(EXTRA_OPEN_CHAT)?.let { openChatRequest = it }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Opening the app checks the SIP registration right away (e.g. after the network changed
+        // while the phone was asleep) instead of waiting for the next refresh
+        SoftphoneApp.instance.sipManager.onPushWakeup()
+        // New version published on GitHub? (at most once an hour)
+        lifecycleScope.launch { SoftphoneApp.instance.appUpdater.check() }
     }
 
     private fun configureLockScreenFlags() {
@@ -107,5 +141,9 @@ class MainActivity : ComponentActivity() {
                 WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             )
         }
+    }
+
+    companion object {
+        const val EXTRA_OPEN_CHAT = "open_chat"
     }
 }
