@@ -82,7 +82,7 @@ jobs:
       - name: update.json
         run: |
           # First lines of the latest commit message (also for runs started by hand)
-          NOTES="$(git log -1 --format=%B | head -n 5)"
+          NOTES="$(git log -1 --format=%B | grep -v -i -E '^(Co-Authored-By|Signed-off-by):' | head -n 5)"
           echo "NOTES<<EOF" >> "$GITHUB_ENV"; echo "$NOTES" >> "$GITHUB_ENV"; echo "EOF" >> "$GITHUB_ENV"
           BASE="https://github.com/${{ github.repository }}/releases/download/v$VERSION_NAME"
           # apkUrl: universal APK (apps before 1.0.5 read only this); apks: one per CPU type
@@ -142,7 +142,7 @@ jobs:
 
       - name: desktop-update.json
         run: |
-          NOTES="$(git log -1 --format=%B | head -n 5)"
+          NOTES="$(git log -1 --format=%B | grep -v -i -E '^(Co-Authored-By|Signed-off-by):' | head -n 5)"
           URL="https://github.com/${{ github.repository }}/releases/download/v$VERSION_NAME/Dialer-Windows-Setup.exe"
           jq -n --arg v "$VERSION_NAME" --arg url "$URL" --arg notes "$NOTES"             '{version: $v, installerUrl: $url, notes: $notes}' > desktop-update.json
           cat desktop-update.json
